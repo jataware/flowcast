@@ -1,0 +1,11 @@
+
+# autoenv files
+.autoenv
+.autoleave
+
+# netcdf files
+*.nc
+
+
+# temporary files while downloading
+*.sh.status
