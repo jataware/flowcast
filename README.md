@@ -1,7 +1,9 @@
 # Notes
 
 ## Selecting Data
-🤷
+- 🤷 unclear how to determine what the correct variable name is for some desired type of measurement
+- also unclear best way to pick a dataset e.g. there are > 55,000 entries for "tasmax" (maximum surface air temperature)
+- for projected future data, a good idea is to set the experiment id to one of the SSPs (shared socioeconomic pathways) e.g. ssp585 (high emissions) or ssp126 (low emissions)
 
 ## Downloading Data
 ### Prereqs
