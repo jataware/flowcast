@@ -1,4 +1,5 @@
 import xarray as xr
+import numpy as np
 from matplotlib import pyplot as plt
 
 
@@ -16,13 +17,40 @@ Tasks:
 - final plot should be a line graph of predicted people exposed (per year)
 """
 
+from itertools import count
+import pandas as pd
+def get_population_data() -> xr.Dataset:
+    """get an xarray with SSP5 population data"""
+    
+    years = [*range(2010, 2110, 10)]
+    data_folder = 'data/population/SSP5/Total/NetCDF'
+
+    all_data = [xr.open_dataset(f'{data_folder}/ssp5_{year}.nc') for year in years]
+
+    for i, year in enumerate(years):
+        data = all_data[i]
+        # rename the population variable to be consistent
+        data = data.rename({f'ssp5_{year}': 'population', 'lon': 'x', 'lat': 'y'})
+
+        # add a year coordinate
+        data['time'] = pd.Timestamp(year, 1, 1)
+
+        # reassign back to the list of data
+        all_data[i] = data
+
+    # combine all the data into one xarray
+    all_data = xr.concat(all_data, dim='time')
+
+    return all_data
+
 
 def test():
-    datapath = 'tasmax_Amon_CanESM5_ssp585_r13i1p2f1_gn_201501-210012.nc'
-    data = xr.open_dataset(datapath, decode_coords='all')
+    datapath = 'data/cmip6/tasmax_Amon_CanESM5_ssp585_r13i1p2f1_gn_201501-210012.nc'
+    data = xr.open_dataset(datapath)
+    pop = get_population_data()
 
     #plot the first time step
-    data['tasmax'].isel(time=0).plot(); 
+    data['tasmax'].isel(time=0).plot()
     plt.show()
 
     pdb.set_trace()
