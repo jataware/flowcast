@@ -1,6 +1,7 @@
-import xarray as xr
-import numpy as np
 from matplotlib import pyplot as plt
+import numpy as np
+import pandas as pd
+import xarray as xr
 
 
 import pdb
@@ -17,8 +18,6 @@ Tasks:
 - final plot should be a line graph of predicted people exposed (per year)
 """
 
-from itertools import count
-import pandas as pd
 def get_population_data() -> xr.Dataset:
     """get an xarray with SSP5 population data"""
     
@@ -45,15 +44,39 @@ def get_population_data() -> xr.Dataset:
 
 
 def test():
+    """
+    How many people will be exposed to extreme heat events (e.g., heatwaves) in the future?
+    """
+    
+    # get cmip6 data and population data
     datapath = 'data/cmip6/tasmax_Amon_CanESM5_ssp585_r13i1p2f1_gn_201501-210012.nc'
     data = xr.open_dataset(datapath)
     pop = get_population_data()
 
-    #plot the first time step
-    data['tasmax'].isel(time=0).plot()
+    #threshold data to only tasmax values that are larger than 35°C (308.15 K)
+    mask = data['tasmax'] > 308.15
+    mask['decade'] = data['time.year'] // 10 * 10
+    heatwave = mask.groupby('decade').mean(dim='time') * 100
+    
+    # percentage_by_decade = percentage_by_decade.rename({'tasmax': 'pct-heatwave'})
+
+    # plot all 10 decades in a 2x5 plot
+    fig, axes = plt.subplots(2, 5, figsize=(20, 10))
+    for i, ax in enumerate(axes.flat):
+        decade = 2000 + (i+1) * 10
+        heatwave.isel(decade=i).plot(ax=ax, vmin=0, vmax=100)
+        ax.set_title(f'{decade}s')
+
+    #set the title for the entire plot
+    fig.suptitle('Extreme Heat Event Percentage by Decade', fontsize=20)
+
     plt.show()
 
-    pdb.set_trace()
+    #plot the first time step
+    # data['tasmax'].isel(time=0).plot()
+    # plt.show()
+
+    # pdb.set_trace()
     ...
 
 
