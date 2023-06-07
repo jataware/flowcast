@@ -9,3 +9,7 @@
 
 # temporary files while downloading
 *.sh.status
+
+
+# data files
+data/

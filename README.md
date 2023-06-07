@@ -1,9 +1,12 @@
 # Notes
 
-## Selecting Data
+## Selecting CMIP6 Data
+- browse data at https://esgf-node.llnl.gov/search/cmip6/
 - 🤷 unclear how to determine what the correct variable name is for some desired type of measurement
 - also unclear best way to pick a dataset e.g. there are > 55,000 entries for "tasmax" (maximum surface air temperature)
 - for projected future data, a good idea is to set the experiment id to one of the SSPs (shared socioeconomic pathways) e.g. ssp585 (high emissions) or ssp126 (low emissions)
+### Population Data
+- https://sedac.ciesin.columbia.edu/data/set/popdynamics-1-8th-pop-base-year-projection-ssp-2000-2100-rev01
 
 ## Downloading Data
 ### Prereqs
