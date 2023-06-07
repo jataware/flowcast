@@ -13,3 +13,7 @@
 
 # data files
 data/
+
+
+# python files
+__pycache__/

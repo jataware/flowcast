@@ -62,7 +62,7 @@ def test():
     pop = regrid(pop, heat_res, RegridMethod.SUM)
 
     # multiply heat% by population
-    heat_exposed = heat * pop
+    heat_exposed = ((heat > 0) * pop).sum(dim=['x', 'y'])
 
     pdb.set_trace()
     ...
