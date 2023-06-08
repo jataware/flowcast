@@ -21,3 +21,6 @@ __pycache__/
 
 # archycoder session files
 *.chat
+
+# gadm folder
+gadm/
