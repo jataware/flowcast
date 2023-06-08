@@ -27,3 +27,9 @@
 - enter OpenID when prompted
 - enter password when prompted
 - data will download to current directory
+
+
+## Setup
+```bash
+conda install -c conda-forge xesmf
+```

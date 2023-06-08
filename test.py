@@ -44,7 +44,7 @@ def get_population_data() -> xr.Dataset:
 
     return all_data
 
-
+import xesmf as xe
 def test():
     """
     How many people will be exposed to extreme heat events (e.g., heatwaves) in the future?
@@ -55,17 +55,26 @@ def test():
     pop_res = get_resolution(pop)
     heat_res = get_resolution(heat)
 
-    # # regrid heat% to the same resolution as population
+
+
+
+
+
+    # regrid heat% to the same resolution as population
+    regridder = xe.Regridder(heat, pop, 'bilinear')
+    heat = regridder(heat)
+
+    # CDO regridding not working...
     # heat = regrid(heat, pop_res, RegridMethod.BICUBIC)
+    # pop = regrid(pop, heat_res, RegridMethod.SUM)
 
-    # regrid population to the same resolution as heat%
-    pop = regrid(pop, heat_res, RegridMethod.SUM)
+    # threshold heat% and multiply by population
+    heat_exposed = ((heat > 0) * pop).sum(dim=['lat', 'lon'])
 
-    # multiply heat% by population
-    heat_exposed = ((heat > 0) * pop).sum(dim=['x', 'y'])
-
-    pdb.set_trace()
-    ...
+    # plot the results
+    heat_exposed['population'].plot()
+    plt.title('People Exposed to Heatwaves by Decade')
+    plt.show()
 
 
 
