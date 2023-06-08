@@ -52,19 +52,13 @@ def test():
     pop = get_population_data()
     heat = get_heatwave_data()
 
-    pop_res = get_resolution(pop)
-    heat_res = get_resolution(heat)
-
-
-
-
-
-
     # regrid heat% to the same resolution as population
     regridder = xe.Regridder(heat, pop, 'bilinear')
     heat = regridder(heat)
 
     # CDO regridding not working...
+    # pop_res = get_resolution(pop)
+    # heat_res = get_resolution(heat)
     # heat = regrid(heat, pop_res, RegridMethod.BICUBIC)
     # pop = regrid(pop, heat_res, RegridMethod.SUM)
 
