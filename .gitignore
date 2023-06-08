@@ -17,3 +17,7 @@ data/
 
 # python files
 __pycache__/
+
+
+# archycoder session files
+*.chat
