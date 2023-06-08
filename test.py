@@ -42,7 +42,11 @@ def get_population_data() -> xr.Dataset:
     # combine all the data into one xarray
     all_data = xr.concat(all_data, dim='decade')
 
-    return all_data
+    # Interpolate to yearly resolution
+    yearly_data = all_data.interp(decade=np.arange(2010, 2101))
+    yearly_data = yearly_data.rename({'decade': 'year'})
+    
+    return yearly_data
 
 import xesmf as xe
 def test():
@@ -52,9 +56,13 @@ def test():
     pop = get_population_data()
     heat = get_heatwave_data()
 
+    # match up the years of the population data and heatwave data
+    pop = pop.isel(year=slice(5,None))
+
     # regrid heat% to the same resolution as population
     regridder = xe.Regridder(heat, pop, 'bilinear')
     heat = regridder(heat)
+
 
     # CDO regridding not working...
     # pop_res = get_resolution(pop)
@@ -63,11 +71,11 @@ def test():
     # pop = regrid(pop, heat_res, RegridMethod.SUM)
 
     # threshold heat% and multiply by population
-    heat_exposed = ((heat > 0) * pop).sum(dim=['lat', 'lon'])
+    heat_exposed = ((heat > 0)['year_heat%'] * pop['population']).sum(dim=['lat', 'lon'])
 
-    # plot the results
-    heat_exposed['population'].plot()
-    plt.title('People Exposed to Heatwaves by Decade')
+    # plot the results. This is the number of people per year exposed to at least one heat event (temperature > 35°C)
+    heat_exposed.plot()
+    plt.title('People Exposed to Heatwaves by Year')
     plt.show()
 
 
@@ -82,8 +90,11 @@ def get_heatwave_data() -> xr.Dataset:
 
     #threshold data to only tasmax values that are larger than 35°C (308.15 K)
     mask = data['tasmax'] > 308.15
-    mask['decade'] = data['time.year'] // 10 * 10
-    heatwave = mask.groupby('decade').mean(dim='time') * 100
+    mask['year'] = data['time.year']
+    heatwave = mask.groupby('year').mean(dim='time')
+
+    # convert data array to dataset, and rename the variable
+    heatwave = heatwave.to_dataset().rename({'tasmax': 'year_heat%'})
 
     # # TODO: figure out how to rename the variable...
     # percentage_by_decade = percentage_by_decade.rename({'tasmax': 'pct-heatwave'})
