@@ -15,6 +15,12 @@ import pdb
 """
 [example question]
 How many people will be exposed to extreme heat events (e.g., heatwaves) in the future?
+
+Tasks
+- make time axis use correct datatype
+- combine output into xarray
+- test regridding back on old method
+
 """
 
 def get_population_data() -> xr.Dataset:
@@ -42,6 +48,9 @@ def get_population_data() -> xr.Dataset:
     # Interpolate to yearly resolution
     yearly_data = all_data.interp(decade=np.arange(2010, 2101))
     yearly_data = yearly_data.rename({'decade': 'year'})
+
+    # convert time integer back to datetime
+    yearly_data['year'] = pd.to_datetime(yearly_data['year'].values, format='%Y')
     
     return yearly_data
 
@@ -63,8 +72,8 @@ def get_heatwave_data() -> xr.Dataset:
     # convert data array to dataset, and rename the variable
     heatwave = heatwave.to_dataset().rename({'tasmax': 'year_heat%'})
 
-    # # TODO: figure out how to rename the variable...
-    # percentage_by_decade = percentage_by_decade.rename({'tasmax': 'pct-heatwave'})
+    # convert time integer back to datetime
+    heatwave['year'] = pd.to_datetime(heatwave['year'].values, format='%Y')
 
     # # plot all 10 decades in a 2x5 plot
     # fig, axes = plt.subplots(2, 5, figsize=(20, 10))
@@ -90,13 +99,15 @@ def test():
     """
     How many people will be exposed to extreme heat events (e.g., heatwaves) in the future?
     """
+    print('collecting population and heatwave data...')
     pop = get_population_data()
     heat = get_heatwave_data()
 
     # match up the years of the population data and heatwave data
     pop = pop.isel(year=slice(5,None))
 
-    # # regrid heat% to the same resolution as population
+    # regrid heat% to the same resolution as population
+    print('regridding heat data to match population data...')
     regridder = xe.Regridder(heat, pop, 'bilinear')
     heat = regridder(heat)
 
@@ -114,6 +125,25 @@ def test():
 
     #split out the results by country
     country_heat_exposed = split_by_country(geo_heat_exposed)
+
+    #plot all the countries on a single line plot
+    # from flags import flag_map
+    # plt.rcParams['font.family'] = 'EmojiOne Mozilla'
+    for country in country_heat_exposed['country'].values:
+        country_heat_exposed.sel(country=country)['heat_exposure'].plot(label=country)
+        
+        # # if there is a unicode flag for this country, draw the flag on the plot over the country's data
+        # if country in flag_map:
+        #     data = country_heat_exposed.sel(country=country)['heat_exposure']
+        #     plt.text(data['time'].values[0], data[0].item(), flag_map[country], fontsize=20)
+
+
+
+    plt.title('People Exposed to Heatwaves by Country')
+    plt.legend()
+    plt.show()
+
+
     pdb.set_trace()
 
 
@@ -136,46 +166,86 @@ def split_by_country(data: xr.Dataset, countries:list[str]=None) -> xr.Dataset:
     sf = gpd.read_file(shapefile)
 
 
+    # DEBUG
+    # countries = ['Ethiopia','South Sudan','Somalia','Kenya', 'Sudan', 'Eritrea', 'Somaliland', 'Djibouti','Uganda', 'Rwanda', 'Burundi', 'Tanzania']
+    # pdb.set_trace()
+    # countries = ['China', 'India', 'United States', 'Canada', 'Mexico']
 
-    # debug
-    # countries = ['Ethiopia','South Sudan','Somalia','Kenya', 'Sudan', 'Eritrea', 'Somaliland', 
-    #         'Djibouti','Uganda', 'Rwanda', 'Burundi', 'Tanzania']
-    countries = ['China', 'India']
-
-
-    # get the shapefile rows for the countries we want
+    # if no countries are specified, use all of them
     if countries is None:
         countries = sf['NAME_0'].unique().tolist()
 
-    countries_shp = sf[sf['NAME_0'].isin(countries)]
+    # get the shapefile rows for the countries we want
+    countries_set = set(countries)
+    countries_shp = sf[sf['NAME_0'].isin(countries_set)]
+
+    # sort the countries in countries_shp to match the order of the countries in the data
+    countries_shp = countries_shp.set_index('NAME_0').loc[countries].reset_index()
 
     
-    out_countries = []
-    out_data = []
+    out_data = np.zeros((len(data['year']), len(countries)))
     
-    for i, gid, country, geometry in countries_shp.itertuples():
+    for i, (_, gid, country, geometry) in enumerate(countries_shp.itertuples()):
+        print(f'processing {country}...')
         try:
             clipped = data.rio.clip([geometry], crs=4326)
         except NoDataInBounds:
-            #TODO: handle inserting an empty array?
+            # countries with no overlap will get the default of all zeros
             continue
 
-        # aggregate 
+        # aggregate for this country
         country_heat = clipped.sum(dim=['lat', 'lon'])
+        del clipped
 
         # save to output
-        out_countries.append(country)
-        out_data.append(country_heat)
-
+        out_data[:, i] = country_heat
 
     # combine all the data into one xarray
-    #TODO: this isn't quite right
-    out_data = xr.DataArray(out_data, dims=['country', 'year'], coords={'country': out_countries})
+    out_data = xr.Dataset(
+        {
+            'heat_exposure': (['time', 'country'],  out_data)
+        },
+        coords={
+            'time': data['year'].values,
+            'country': countries
+        }
+    )
 
+    return out_data
+
+
+
+
+def test2():
+    import xarray as xr
+    import pandas as pd
+    import numpy as np
+
+    # First, let's create some example data
+    countries = ['USA', 'Canada', 'Mexico']
+    years = pd.date_range('2000-01-01', periods=20, freq='Y')
+    temperature_data = np.random.rand(len(years), len(countries))
+
+    # Next, we create a Dataset
+    ds = xr.Dataset(
+        {
+            'temperature': (['time', 'country'],  temperature_data)
+        },
+        coords={
+            'time': years,
+            'country': countries
+        }
+    )
+
+    print(ds)
 
     pdb.set_trace()
     ...
 
 
+
+
+
 if __name__ == '__main__':
     test()
+    # test2()
