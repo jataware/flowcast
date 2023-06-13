@@ -33,3 +33,16 @@
 ```bash
 conda install -c conda-forge xesmf
 ```
+
+
+## Extreme Heat Scenario
+1. download (geospatial) decadal population data for ssp585 (high emissions) (2010-2100)
+1. interpolate population data to yearly
+1. download (geospatial) monthly maximum surface air temperature (tasmax) projections for ssp585 (2015-2100)
+1. threshold tasmax by 35°C to identify (geospatial) extreme heat months
+1. aggregate extreme heat months by year to get years containing any extreme heat events
+1. geospatial bilinear interpolation to regrid extreme heat data to match population data grid
+1. multiply extreme heat data by population data to get (geospatial) population exposed to extreme heat by year
+1. clip data by each country's shapefile to get (geospatial) population exposed to extreme heat by year by country
+1. sum over area of each country to get total population exposed to extreme heat by year by country
+1. view results
