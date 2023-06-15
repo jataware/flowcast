@@ -32,6 +32,7 @@
 ## Setup
 ```bash
 conda install -c conda-forge xesmf
+pip install dask
 ```
 
 

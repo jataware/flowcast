@@ -2,7 +2,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 import pandas as pd
 import xarray as xr
-import rioxarray as rxr
+import rioxarray as rxr # needs to be imported?
 from rioxarray.exceptions import NoDataInBounds
 
 
@@ -22,6 +22,17 @@ Tasks
 - test regridding back on old method
 
 """
+
+
+from enum import Enum
+
+class Scenario(str, Enum):
+    SSP126 = 'ssp126'
+    SSP245 = 'ssp245'
+    SSP370 = 'ssp370'
+    SSP585 = 'ssp585'
+
+
 
 def get_population_data() -> xr.Dataset:
     """get an xarray with SSP5 population data"""
@@ -60,7 +71,7 @@ def get_population_data() -> xr.Dataset:
 def get_heatwave_data() -> xr.Dataset:
     
     # get cmip6 data and population data
-    datapath = 'data/cmip6/tasmax_Amon_CanESM5_ssp585_r13i1p2f1_gn_201501-210012.nc'
+    datapath = 'data/cmip6/tasmax/tasmax_Amon_CanESM5_ssp585_r13i1p2f1_gn_201501-210012.nc'
     data = xr.open_dataset(datapath)
     
 
@@ -99,6 +110,9 @@ def test():
     """
     How many people will be exposed to extreme heat events (e.g., heatwaves) in the future?
     """
+    #TODO: - regrid heat data before thresholding
+    #      - make use specific ssp scenario selected
+    
     print('collecting population and heatwave data...')
     pop = get_population_data()
     heat = get_heatwave_data()
@@ -113,8 +127,9 @@ def test():
 
 
     # CDO regridding not working... doesn't support custom time unit I'm using.
+    # print('regridding heat data to match population data...')
     # pop_res = get_resolution(pop)
-    # heat = regrid(heat, pop_res, RegridMethod.BICUBIC)
+    # heat = regrid(heat, pop_res, RegridMethod.BILINEAR)
     # -- or --
     # heat_res = get_resolution(heat)
     # pop = regrid(pop, heat_res, RegridMethod.SUM)
@@ -215,31 +230,47 @@ def split_by_country(data: xr.Dataset, countries:list[str]=None) -> xr.Dataset:
 
 
 
+from cftime import DatetimeNoLeap
+from scipy import stats
 
-def test2():
-    import xarray as xr
-    import pandas as pd
-    import numpy as np
+def crop_suitability(scenario:Scenario=Scenario.SSP585):
+    # load modis data and select cropland layer
+    modis = xr.open_dataset('data/MODIS/land-use-5km.nc')
+    modis = modis['LC_Type1']
 
-    # First, let's create some example data
-    countries = ['USA', 'Canada', 'Mexico']
-    years = pd.date_range('2000-01-01', periods=20, freq='Y')
-    temperature_data = np.random.rand(len(years), len(countries))
+    # convert modis time from Julian (🤣) to match the pr and tas data
+    modis['time'] = modis.indexes['time'].to_datetimeindex().map(lambda dt: DatetimeNoLeap(dt.year, dt.month, dt.day))
 
-    # Next, we create a Dataset
-    ds = xr.Dataset(
-        {
-            'temperature': (['time', 'country'],  temperature_data)
-        },
-        coords={
-            'time': years,
-            'country': countries
-        }
-    )
+    # load pr and tas data with chunking
+    chunk_size = {'time': 1}  # Adjust chunk size based on your memory availability and the size of your dataset
+    pr = xr.open_dataset(f'data/cmip6/pr/pr_Amon_FGOALS-f3-L_{scenario}_r1i1p1f1_gr_201501-210012.nc', chunks=chunk_size)
+    tas = xr.open_dataset(f'data/cmip6/tas/tas_Amon_FGOALS-f3-L_{scenario}_r1i1p1f1_gr_201501-210012.nc', chunks=chunk_size)
 
-    print(ds)
+    # regrid pr and tas to match modis
+    regridder = xe.Regridder(pr, modis, 'bilinear')
+    pr = regridder(pr)
+    tas = regridder(tas)
+
+    # handle interpolation artifact:
+    tas = tas.where(tas != 0, np.nan)
+    pr = pr.where(pr != 0, np.nan)
+
+    # select the time period from tas/pr that is within the range of time in modis
+    tas_slice = tas.sel(time=slice(modis['time'].min(), modis['time'].max()))
+    pr_slice = pr.sel(time=slice(modis['time'].min(), modis['time'].max()))
+
+    #combine together all the modis data into a single time, taking the mode of the data
+    #TODO: find a better way to do this
+    modis_mode = stats.mode(modis, axis=0, nan_policy='omit', keepdims=False)[0]
+    modis_mode = xr.DataArray(modis_mode, coords={'lat': modis['lat'], 'lon': modis['lon']}, dims=['lat', 'lon'])
+
+
+    #TODO: take mean/std of tas/pr over all cropland. this is the baseline to compare against
+    pdb.set_trace()
+    tas_slice.where(modis_mode == 12)
 
     pdb.set_trace()
+
     ...
 
 
@@ -247,5 +278,19 @@ def test2():
 
 
 if __name__ == '__main__':
-    test()
-    # test2()
+    import sys
+
+    scenarios = [*Scenario.__members__.keys()]
+    if len(sys.argv) != 2:
+        print(f'usage: python test.py <{"|".join(scenarios)}>')
+        sys.exit(1)
+
+    try:
+        scenario = Scenario(sys.argv[1])
+    except ValueError:
+        raise ValueError(f'invalid scenario. expected one of: {", ".join(scenarios)}. got: {sys.argv[1]}') from None
+
+
+    # test(scenario)
+
+    crop_suitability(scenario)
