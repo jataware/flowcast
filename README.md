@@ -33,6 +33,7 @@
 ```bash
 conda install -c conda-forge xesmf
 pip install dask
+pip install nc-time-axis
 ```
 
 

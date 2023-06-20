@@ -17,9 +17,8 @@ import pdb
 How many people will be exposed to extreme heat events (e.g., heatwaves) in the future?
 
 Tasks
-- make time axis use correct datatype
-- combine output into xarray
-- test regridding back on old method
+- make heat scenario allow selection of SSP scenario
+- make heat scenario regrid before thresholding
 
 """
 
@@ -231,9 +230,8 @@ def split_by_country(data: xr.Dataset, countries:list[str]=None) -> xr.Dataset:
 
 
 from cftime import DatetimeNoLeap
-from scipy import stats
 
-def crop_suitability(scenario:Scenario=Scenario.SSP585):
+def crop_suitability(scenario:Scenario=Scenario.SSP585, suitability_threshold:float=3.0) -> xr.Dataset:
     # load modis data and select cropland layer
     modis = xr.open_dataset('data/MODIS/land-use-5km.nc')
     modis = modis['LC_Type1']
@@ -259,19 +257,50 @@ def crop_suitability(scenario:Scenario=Scenario.SSP585):
     tas_slice = tas.sel(time=slice(modis['time'].min(), modis['time'].max()))
     pr_slice = pr.sel(time=slice(modis['time'].min(), modis['time'].max()))
 
-    #combine together all the modis data into a single time, taking the mode of the data
-    #TODO: find a better way to do this
-    modis_mode = stats.mode(modis, axis=0, nan_policy='omit', keepdims=False)[0]
-    modis_mode = xr.DataArray(modis_mode, coords={'lat': modis['lat'], 'lon': modis['lon']}, dims=['lat', 'lon'])
+    # Take the first frame of the modis data as the location of cropland
+    # TODO: look into some sort of mode or other aggregation over all the modis data
+    cropland = modis.isel(time=0)
+    cropmask = cropland == 12
 
 
-    #TODO: take mean/std of tas/pr over all cropland. this is the baseline to compare against
-    pdb.set_trace()
-    tas_slice.where(modis_mode == 12)
+    # take mean/std of tas/pr over all cropland. this is the baseline to compare against
+    tas_mean = tas_slice.where(cropmask).mean(dim=['lat', 'lon', 'time'], skipna=True)['tas'].values.item()
+    tas_std = tas_slice.where(cropmask).std(dim=['lat', 'lon', 'time'], skipna=True)['tas'].values.item()
+    pr_mean = pr_slice.where(cropmask).mean(dim=['lat', 'lon', 'time'], skipna=True)['pr'].values.item()
+    pr_std = pr_slice.where(cropmask).std(dim=['lat', 'lon', 'time'], skipna=True)['pr'].values.item()
 
-    pdb.set_trace()
 
-    ...
+    # calculate the z-scores for the full pr and tas datasets (only considering cropland)
+    tas_z = ((tas - tas_mean) / tas_std).where(cropmask)
+    pr_z = ((pr - pr_mean) / pr_std).where(cropmask)
+
+    # take |z| < 3 as the threshold for suitability
+    # total suitability is where both pr and tas are suitable
+    suitability = ((np.abs(tas_z) < suitability_threshold)['tas'] & (np.abs(pr_z) < suitability_threshold)['pr']).sum(dim=['lat', 'lon']) / cropmask.sum(dim=['lat', 'lon'])
+
+    # aggregate each year's suitability into a single value
+    suitability = suitability.groupby('time.year').mean(dim='time')
+
+    # convert to xarray.dataset
+    suitability = xr.Dataset(
+        {
+            'suitability': (['year'], suitability.values)
+        },
+        coords={
+            'year': suitability['year'].values
+        }
+    )
+
+    # plot the suitability over time
+    suitability['suitability'].plot()
+    plt.title(f'Crop suitability over time ({scenario})')
+    plt.xlabel('Year')
+    plt.ylabel('Suitability')
+    plt.show()
+
+    return suitability
+
+
 
 
 
