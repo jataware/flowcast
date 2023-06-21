@@ -22,10 +22,10 @@
     ```
 - run script e.g. 
     ```bash
-    ./wget-20230606122309.sh
+    ./wget-20230606122309.sh -s # -s should allow downloading without needing openID login
     ```
-- enter OpenID when prompted
-- enter password when prompted
+- enter OpenID if prompted
+- enter password if prompted
 - data will download to current directory
 
 
