@@ -38,6 +38,8 @@ pip install nc-time-axis
 
 
 ## Extreme Heat Scenario
+**How many people will be exposed to extreme heat events (e.g., heatwaves) in the future?**
+
 1. download (geospatial) decadal population data for ssp585 (high emissions) (2010-2100)
 1. interpolate population data to yearly
 1. download (geospatial) monthly maximum surface air temperature (tasmax) projections for ssp585 (2015-2100)
@@ -48,3 +50,17 @@ pip install nc-time-axis
 1. clip data by each country's shapefile to get (geospatial) population exposed to extreme heat by year by country
 1. sum over area of each country to get total population exposed to extreme heat by year by country
 1. view results
+
+
+## Crop Viability Scenario
+**How will the viability of current croplands change in the future?**
+### Process
+
+1. Get (geospatial) land use data. Modis data just includes africa. Extract points (mask) corresponding to cropland
+1. Get (geospatial) temperature (tas) and precipitation (pr) data projected from 2015-2100
+1. Regrid tas and pr to match cropland data resolution, and select masked values
+1. Compute distribution (mean/std) of tas and pr from 2015-2020 to use as baseline climate for croplands
+1. Compute the z-score of tas and pr over all time (2015-2100)
+1. Viability is any location where |tas_z| < 3.0 and |pr_z| < 3.0. Compute the viability % over time as compared to the baseline
+1. Sum viability over lat and lon to get single time curve
+1. View results
