@@ -15,11 +15,7 @@ import pdb
 """
 [example question]
 How many people will be exposed to extreme heat events (e.g., heatwaves) in the future?
-
-Tasks
-- make heat scenario allow selection of SSP scenario
-- make heat scenario regrid before thresholding
-
+How will the viability of current croplands change in the future?
 """
 
 
