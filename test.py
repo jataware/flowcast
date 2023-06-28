@@ -5,9 +5,7 @@ import xarray as xr
 import rioxarray as rxr # needs to be imported?
 from rioxarray.exceptions import NoDataInBounds
 
-
-from regrid import regrid, get_resolution, RegridMethod
-
+# from regrid import regrid, get_resolution, RegridMethod
 
 import pdb
 
