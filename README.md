@@ -36,6 +36,11 @@ pip install dask
 pip install nc-time-axis
 ```
 
+## Docker Container
+```bash
+docker build -t cmip6-insights:latest .
+docker run -it cmip6-insights:latest <ssp#>
+```
 
 ## Extreme Heat Scenario
 **How many people will be exposed to extreme heat events (e.g., heatwaves) in the future?**
