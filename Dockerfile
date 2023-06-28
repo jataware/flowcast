@@ -18,8 +18,7 @@ RUN wget https://repo.anaconda.com/archive/Anaconda3-2023.03-1-Linux-x86_64.sh &
 ENV PATH /opt/anaconda/bin:$PATH
 
 # Updating Conda packages
-# RUN conda update conda -y 
-#  && conda update --all -y
+# RUN conda update conda -y && conda update --all -y
 
 # Create conda environment
 RUN conda create -n cmip6 python=3.10 -y
@@ -41,31 +40,30 @@ RUN conda install -c nesii -c conda-forge esmpy=8.4.2 -y
 RUN pip install -r requirements.txt
 
 
+# set up entrypoint without providing the command line argument
+# ENTRYPOINT ["/bin/bash", "-c", "conda run -n cmip6 python ./test.py"]
 
-######### Install CDO from source #########
+# # user is expected to provide the command line argument
+# CMD [ "" ]
 
-# install clang from anaconda
-# RUN conda install -c anaconda clang
-
-# # download CDO source code
-# RUN wget https://code.mpimet.mpg.de/attachments/download/28013/cdo-2.2.0.tar.gz
-
-# # extract CDO source code
-# RUN tar -xvf cdo-2.2.0.tar.gz
-
-# change directory to CDO source code
+# ENTRYPOINT ["python", "./test.py"]
+# CMD [""]
 
 
-# RUN conda install -c conda-forge cdo
-# RUN conda install -c conda-forge python-cdo
+# ...
+
+# RUN echo '#!/bin/bash\nsource /opt/anaconda/etc/profile.d/conda.sh\nconda activate cmip6\nexec python "./test.py" "$@"' > /entrypoint.sh
+# RUN chmod +x /entrypoint.sh
+# ENTRYPOINT ["/entrypoint.sh"]
+
+# ...
 
 
+# Create entrypoint.sh, make it executable and set it as ENTRYPOINT
+RUN echo '#!/bin/bash' > /entrypoint.sh && \
+    echo 'source /opt/anaconda/etc/profile.d/conda.sh' >> /entrypoint.sh && \
+    echo 'conda activate cmip6' >> /entrypoint.sh && \
+    echo 'exec python "./test.py" "$@"' >> /entrypoint.sh && \
+    chmod +x /entrypoint.sh
 
-
-# Install your library's Python dependencies
-# RUN pip install -r requirements.txt
-
-# Define the command to run your application
-CMD ["/bin/bash", "-c", "conda run -n cmip6 python ./test.py ssp585"]
-# CMD ["python", "./test2.py"]
-# CMD ["python", "./test.py"]
+ENTRYPOINT ["/entrypoint.sh"]
