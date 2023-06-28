@@ -41,22 +41,7 @@ RUN pip install -r requirements.txt
 
 
 # set up entrypoint without providing the command line argument
-# ENTRYPOINT ["/bin/bash", "-c", "conda run -n cmip6 python ./test.py"]
-
-# # user is expected to provide the command line argument
-# CMD [ "" ]
-
-# ENTRYPOINT ["python", "./test.py"]
-# CMD [""]
-
-
-# ...
-
-# RUN echo '#!/bin/bash\nsource /opt/anaconda/etc/profile.d/conda.sh\nconda activate cmip6\nexec python "./test.py" "$@"' > /entrypoint.sh
-# RUN chmod +x /entrypoint.sh
-# ENTRYPOINT ["/entrypoint.sh"]
-
-# ...
+# CMD ["/bin/bash", "-c", "conda run -n cmip6 python ./test.py ssp585"]
 
 
 # Create entrypoint.sh, make it executable and set it as ENTRYPOINT
