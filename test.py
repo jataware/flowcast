@@ -272,7 +272,7 @@ if __name__ == '__main__':
         sys.exit(1)
 
     try:
-        ssp = Scenario(sys.argv[1])
+        ssp = Scenario(sys.argv[1].lower())
     except ValueError:
         raise ValueError(f'invalid scenario. expected one of: {", ".join(ssps)}. got: {sys.argv[1]}') from None
 
