@@ -89,16 +89,39 @@ result = split by country (exposure, ['US', 'China', 'India', ...])
 [3. including past 80 years in data with ERA5]
 TBD
 
-
-
 """
 
+
+
+
+
+
+from matplotlib import pyplot as plt
+import numpy as np
+import pandas as pd
+import xarray as xr
+import rioxarray as rxr # needs to be imported?
+from rioxarray.exceptions import NoDataInBounds
 
 from enum import Enum
 from typing import Any
 from types import MethodType
 
+
+#TODO: pull this from elwood when it works
+from regrid import Resolution
+
+
+
 import pdb
+
+
+"""
+TASKS:
+- have ssp be a dimension in xarray data
+- 
+"""
+
 
 
 class Scenario(str, Enum):
@@ -123,6 +146,11 @@ class Data(str, Enum):
     pr = 'pr'
     #TODO: other variables as needed
 
+class Frequency(str, Enum):
+    monthly = 'monthly'
+    yearly = 'yearly'
+    decadal = 'decadal'
+
 # Operations
 # - load
 # - regrid
@@ -146,12 +174,14 @@ class Pipeline:
 
     def __init__(self):
         
-        # settings for data to be used in pipeline
+        # static settings for data to be used in pipeline
         self.realizations: list[Realization] = []
         self.scenarios: list[Scenario] = []
         self.models: list[Model] = []
-        #target resolution?
-        #target time frequency?
+        
+        # dynamic settings for data to be used in pipeline
+        self.resolution: Resolution|str|None = None
+        self.frequency: Frequency|str|None = None
         #target country split?
         
         # list of steps in the pipeline DAG
@@ -176,6 +206,7 @@ class Pipeline:
         """Set the climate model(s) to pull data from in the pipeline"""
         self.models = list(models)
 
+
     def bind_value(self, identifier:str, value: Any):
         """Bind a value to an identifier in the pipeline namespace"""
         self.last_set_identifier = identifier
@@ -190,6 +221,28 @@ class Pipeline:
         assert self.last_set_identifier is not None, 'No value has been set yet'
         return self.env[self.last_set_identifier]
 
+    def set_resolution(self, target:Resolution|str):
+        """
+        Append a set_resolution step to the pipeline. 
+        Resolution can either be a fixed Resolution object, or target the resolution of an existing dataset by name.
+        """
+        self.steps.append((self._do_set_resolution, (target,)))
+
+    def _do_set_resolution(self, resolution:Resolution|str):
+        #TODO:
+        # Only run during operations on datasets, and only run if the dataset is not already at the target resolution.
+        self.resolution = resolution
+
+    def set_frequency(self, target:Frequency|str):
+        """
+        Append a set_frequency step to the pipeline.
+        Frequency can either be a fixed Frequency object, or target the frequency of an existing dataset by name.
+        """
+        self.steps.append((self._do_set_frequency, (target,)))
+
+    def do_set_frequency(self, frequency:Frequency|str):
+        self.frequency = frequency
+
     
     def load(self, identifier:str, data: Data):
         """Append data load step to the pipeline"""
@@ -200,6 +253,9 @@ class Pipeline:
 
         #special case variables separate from cmip6 data
         if data == Data.population:
+
+            #TODO: make get_population handle taking in multiple scenarios, and using them as xarray axes
+            pops = [get_population_data(scenario) for scenario in self.scenarios]
             pdb.set_trace()
             ...
 
@@ -212,6 +268,7 @@ class Pipeline:
         assert len(self.realizations) > 0, 'Must specify at least one realization with .set_realizations()'
         assert len(self.scenarios) > 0, 'Must specify at least one scenario with .set_scenarios()'
         assert len(self.models) > 0, 'Must specify at least one model with .set_models()'
+        assert self.resolution is not None, 'Must specify a target resolution with .set_resolution()'
 
         #TODO 
         # - type/size/shape checking, etc.
@@ -229,26 +286,86 @@ class Pipeline:
         for func, args in self.steps:
             func(*args)
 
-#topological ordering (could be reconstructed back into a DAG)
-pipe = Pipeline()
-pipe.set_realizations(Realization.r1i1p1f1)
-pipe.set_scenarios(Scenario.ssp585)
-pipe.set_models(Model.CAS_ESM2_0)
-pipe.load('pop', Data.population)
-pipe.load('tasmax', Data.tasmax)
-#...
-
-#TBD on inferring needed transformations, e.g. regridding, etc.
-
-pipe.compile()
-pipe.execute()
-
-res = pipe.get_last_value()
-pop = pipe.get_value('pop')
-tasmax = pipe.get_value('tasmax')
-
-pdb.set_trace()
-...
 
 
-#every step print out: data type and data dims
+def get_population_data(scenario: Scenario, frequency: Frequency, resolution: Resolution) -> xr.Dataset:
+# def get_population_data(ssp:Scenario) -> xr.Dataset:
+    """get an xarray with the specified population data"""
+    
+    pdb.set_trace()
+    ssp = ssp.value[:-2] # remove the last two characters (e.g., 'ssp126' -> 'ssp1')
+
+    years = [*range(2010, 2110, 10)]
+    all_data = [xr.open_dataset(f'data/population/{ssp.upper()}/Total/NetCDF/{ssp}_{year}.nc') for year in years]
+
+    for i, year in enumerate(years):
+        data = all_data[i]
+        # rename the population variable to be consistent
+        data = data.rename({f'{ssp}_{year}': 'population'})#, 'lon': 'x', 'lat': 'y'})
+
+        # add a year coordinate
+        data['decade'] = year #pd.Timestamp(year, 1, 1)
+
+        # reassign back to the list of data
+        all_data[i] = data
+
+    # combine all the data into one xarray
+    all_data = xr.concat(all_data, dim='decade')
+
+    # Interpolate to yearly resolution
+    yearly_data = all_data.interp(decade=np.arange(2010, 2101))
+    yearly_data = yearly_data.rename({'decade': 'year'})
+
+    # convert time integer back to datetime
+    yearly_data['year'] = pd.to_datetime(yearly_data['year'].values, format='%Y')
+    
+    return yearly_data
+
+
+
+def get_cmip_data(variable: Data, realization: Realization, scenario: Scenario, model: Model, resolution: Resolution) -> xr.Dataset:
+    """get an xarray with the specified cmip data"""
+    raise NotImplementedError()
+
+
+
+
+
+
+
+#TODO: parameterize function with scenario, etc.
+def heat_scenario():
+    #topological ordering (could be reconstructed back into a DAG)
+    pipe = Pipeline()
+    pipe.set_realizations(Realization.r1i1p1f1)
+    pipe.set_scenarios(Scenario.ssp585)
+    pipe.set_models(Model.CAS_ESM2_0)
+    pipe.set_resolution(Resolution(0.5, 0.5))
+    pipe.load('pop', Data.population)
+    pipe.load('tasmax', Data.tasmax)
+    #...
+
+    #TBD on inferring needed transformations, e.g. regridding, etc.
+
+    pipe.compile()
+    pipe.execute()
+
+    res = pipe.get_last_value()
+    pop = pipe.get_value('pop')
+    tasmax = pipe.get_value('tasmax')
+
+    pdb.set_trace()
+    ...
+
+    #every step print out: data type and data dims
+
+
+
+def crop_scenario():
+    raise NotImplementedError()
+
+
+
+if __name__ == '__main__':
+    heat_scenario()
+    # crop_scenario()
