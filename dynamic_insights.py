@@ -139,12 +139,17 @@ class Model(str, Enum):
     CAS_ESM2_0 = 'CAS-ESM2-0'
     #TODO: other models as needed
 
-class Data(str, Enum):
-    population = 'population'
+
+
+class CMIP6Data(str, Enum):
     tasmax = 'tasmax'
     tas = 'tas'
     pr = 'pr'
     #TODO: other variables as needed
+
+class OtherData(str, Enum):
+    population = 'population'
+
 
 class Frequency(str, Enum):
     monthly = 'monthly'
@@ -235,23 +240,23 @@ class Pipeline:
         self.frequency = frequency
 
     
-    def load(self, identifier:str, data: Data):
+    def load(self, identifier:str, data: CMIP6Data|OtherData):
         """Append data load step to the pipeline"""
         self.steps.append((self._do_load, (identifier, data,)))
 
-    def _do_load(self, identifier:str, data: Data):
+    def _do_load(self, identifier:str, data: CMIP6Data|OtherData):
         """Perform execution of a data load step"""
 
         #special case variables separate from cmip6 data
-        if data == Data.population:
+        match data:
+            case OtherData.population:
+                var = get_population_data(self.scenarios)
+            case CMIP6Data():
+                var = get_cmip_data(data, self.realizations, self.scenarios, self.models)
+            case _:
+                raise ValueError(f'Unrecognized data type: {data}. Expected one of: {CMIP6Data}, {OtherData}')
 
-            #TODO: make get_population handle taking in multiple scenarios, and using them as xarray axes
-            pop = get_population_data(self.scenarios)
-            pdb.set_trace()
-            ...
-
-        pdb.set_trace()
-        ...
+        self.bind_value(identifier, var)
 
     def compile(self):
         """Check that the pipeline is valid, insert inferred steps, etc."""
@@ -288,15 +293,13 @@ def get_population_data(scenarios: list[Scenario]) -> xr.Dataset:
         scenario_data: list[xr.Dataset] = []
         ssp = scenario.value[:-2] # remove the last two characters (e.g., 'ssp126' -> 'ssp1')
 
-        years = [2010, 2020, 2030, 2040, 2050, 2060, 2070, 2080, 2090, 2100]
-
-        for i, year in enumerate(years):
+        for year in [2010, 2020, 2030, 2040, 2050, 2060, 2070, 2080, 2090, 2100]:
             data = xr                                                                           \
                 .open_dataset(f'data/population/{ssp.upper()}/Total/NetCDF/{ssp}_{year}.nc')    \
-                .rename({f'{ssp}_{year}': 'pop'})                                               \
+                .rename({f'{ssp}_{year}': 'population'})                                        \
                 .assign_coords(
                     time=pd.Timestamp(year, 1, 1), 
-                    ssp=('ssp', np.array([scenario.value], dtype='object')) #TBD if this should be the whole ssp number or just the first part
+                    ssp=('ssp', np.array([scenario.value], dtype='object')) #note for population, only the first number is relevant
                 )
             scenario_data.append(data)
 
@@ -311,9 +314,10 @@ def get_population_data(scenarios: list[Scenario]) -> xr.Dataset:
 
 
 
-def get_cmip_data(variable: Data, realization: Realization, scenario: Scenario, model: Model, resolution: Resolution) -> xr.Dataset:
+def get_cmip_data(variable: CMIP6Data|OtherData, realization: Realization, scenario: Scenario, model: Model) -> xr.Dataset:
     """get an xarray with the specified cmip data"""
-    raise NotImplementedError()
+    pdb.set_trace()
+    ...
 
 
 
@@ -323,15 +327,16 @@ def get_cmip_data(variable: Data, realization: Realization, scenario: Scenario, 
 
 #TODO: parameterize function with scenario, etc.
 def heat_scenario():
-    #topological ordering (could be reconstructed back into a DAG)
+
+
     pipe = Pipeline(
         realizations=Realization.r1i1p1f1, 
         scenarios=[Scenario.ssp126, Scenario.ssp245, Scenario.ssp370,Scenario.ssp585], 
         models=Model.CAS_ESM2_0
     )
     pipe.set_resolution(Resolution(0.5, 0.5))
-    pipe.load('pop', Data.population)
-    pipe.load('tasmax', Data.tasmax)
+    pipe.load('tasmax', CMIP6Data.tasmax)
+    pipe.load('pop', OtherData.population)
     #...
 
     #TBD on inferring needed transformations, e.g. regridding, etc.
