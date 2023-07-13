@@ -172,12 +172,16 @@ class Frequency(str, Enum):
 class Pipeline:
 
 
-    def __init__(self):
+    def __init__(self, *,
+            realizations: Realization|list[Realization],
+            scenarios: Scenario|list[Scenario],
+            models: Model|list[Model]
+        ):
         
         # static settings for data to be used in pipeline
-        self.realizations: list[Realization] = []
-        self.scenarios: list[Scenario] = []
-        self.models: list[Model] = []
+        self.realizations: list[Realization] = realizations if isinstance(realizations, list) else [realizations]
+        self.scenarios: list[Scenario] = scenarios if isinstance(scenarios, list) else [scenarios]
+        self.models: list[Model] = models if isinstance(models, list) else [models]
         
         # dynamic settings for data to be used in pipeline
         self.resolution: Resolution|str|None = None
@@ -193,19 +197,6 @@ class Pipeline:
 
         # namespace for binding operation results to identifiers 
         self.env: dict[str, Any] = {}
-
-    def set_realizations(self, *realizations: Realization):
-        """Set the cmip6 realization(s) to use for selecting data"""
-        self.realizations = list(realizations)
-
-    def set_scenarios(self, *scenarios: Scenario):
-        """Set the cmip6 scenario(s) to use for selecting data"""
-        self.scenarios = list(scenarios)
-
-    def set_models(self, *models: Model):
-        """Set the climate model(s) to pull data from in the pipeline"""
-        self.models = list(models)
-
 
     def bind_value(self, identifier:str, value: Any):
         """Bind a value to an identifier in the pipeline namespace"""
@@ -255,7 +246,7 @@ class Pipeline:
         if data == Data.population:
 
             #TODO: make get_population handle taking in multiple scenarios, and using them as xarray axes
-            pops = [get_population_data(scenario) for scenario in self.scenarios]
+            pops = get_population_data(self.scenarios)
             pdb.set_trace()
             ...
 
@@ -268,7 +259,7 @@ class Pipeline:
         assert len(self.realizations) > 0, 'Must specify at least one realization with .set_realizations()'
         assert len(self.scenarios) > 0, 'Must specify at least one scenario with .set_scenarios()'
         assert len(self.models) > 0, 'Must specify at least one model with .set_models()'
-        assert self.resolution is not None, 'Must specify a target resolution with .set_resolution()'
+        # assert self.resolution is not None, 'Must specify a target resolution with .set_resolution()'
 
         #TODO 
         # - type/size/shape checking, etc.
@@ -288,7 +279,7 @@ class Pipeline:
 
 
 
-def get_population_data(scenario: Scenario, frequency: Frequency, resolution: Resolution) -> xr.Dataset:
+def get_population_data(scenarios: list[Scenario]) -> xr.Dataset:
 # def get_population_data(ssp:Scenario) -> xr.Dataset:
     """get an xarray with the specified population data"""
     
@@ -336,10 +327,7 @@ def get_cmip_data(variable: Data, realization: Realization, scenario: Scenario, 
 #TODO: parameterize function with scenario, etc.
 def heat_scenario():
     #topological ordering (could be reconstructed back into a DAG)
-    pipe = Pipeline()
-    pipe.set_realizations(Realization.r1i1p1f1)
-    pipe.set_scenarios(Scenario.ssp585)
-    pipe.set_models(Model.CAS_ESM2_0)
+    pipe = Pipeline(realizations=Realization.r1i1p1f1, scenarios=Scenario.ssp585, models=Model.CAS_ESM2_0)
     pipe.set_resolution(Resolution(0.5, 0.5))
     pipe.load('pop', Data.population)
     pipe.load('tasmax', Data.tasmax)
