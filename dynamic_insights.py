@@ -246,7 +246,7 @@ class Pipeline:
         if data == Data.population:
 
             #TODO: make get_population handle taking in multiple scenarios, and using them as xarray axes
-            pops = get_population_data(self.scenarios)
+            pop = get_population_data(self.scenarios)
             pdb.set_trace()
             ...
 
@@ -280,37 +280,34 @@ class Pipeline:
 
 
 def get_population_data(scenarios: list[Scenario]) -> xr.Dataset:
-# def get_population_data(ssp:Scenario) -> xr.Dataset:
     """get an xarray with the specified population data"""
-    
-    pdb.set_trace()
-    ssp = ssp.value[:-2] # remove the last two characters (e.g., 'ssp126' -> 'ssp1')
 
-    years = [*range(2010, 2110, 10)]
-    all_data = [xr.open_dataset(f'data/population/{ssp.upper()}/Total/NetCDF/{ssp}_{year}.nc') for year in years]
+    all_data: list[xr.Dataset] = []
+    for scenario in scenarios:
 
-    for i, year in enumerate(years):
-        data = all_data[i]
-        # rename the population variable to be consistent
-        data = data.rename({f'{ssp}_{year}': 'population'})#, 'lon': 'x', 'lat': 'y'})
+        scenario_data: list[xr.Dataset] = []
+        ssp = scenario.value[:-2] # remove the last two characters (e.g., 'ssp126' -> 'ssp1')
 
-        # add a year coordinate
-        data['decade'] = year #pd.Timestamp(year, 1, 1)
+        years = [2010, 2020, 2030, 2040, 2050, 2060, 2070, 2080, 2090, 2100]
 
-        # reassign back to the list of data
-        all_data[i] = data
+        for i, year in enumerate(years):
+            data = xr                                                                           \
+                .open_dataset(f'data/population/{ssp.upper()}/Total/NetCDF/{ssp}_{year}.nc')    \
+                .rename({f'{ssp}_{year}': 'pop'})                                               \
+                .assign_coords(
+                    time=pd.Timestamp(year, 1, 1), 
+                    ssp=('ssp', np.array([scenario.value], dtype='object')) #TBD if this should be the whole ssp number or just the first part
+                )
+            scenario_data.append(data)
 
-    # combine all the data into one xarray
-    all_data = xr.concat(all_data, dim='decade')
+        # combine the scenario data into one xarray
+        scenario_data = xr.concat(scenario_data, dim='time')
+        all_data.append(scenario_data)
 
-    # Interpolate to yearly resolution
-    yearly_data = all_data.interp(decade=np.arange(2010, 2101))
-    yearly_data = yearly_data.rename({'decade': 'year'})
+    # combine all the data into one xarray with ssp as a dimension
+    all_data = xr.concat(all_data, dim='ssp')
 
-    # convert time integer back to datetime
-    yearly_data['year'] = pd.to_datetime(yearly_data['year'].values, format='%Y')
-    
-    return yearly_data
+    return all_data
 
 
 
@@ -327,7 +324,11 @@ def get_cmip_data(variable: Data, realization: Realization, scenario: Scenario, 
 #TODO: parameterize function with scenario, etc.
 def heat_scenario():
     #topological ordering (could be reconstructed back into a DAG)
-    pipe = Pipeline(realizations=Realization.r1i1p1f1, scenarios=Scenario.ssp585, models=Model.CAS_ESM2_0)
+    pipe = Pipeline(
+        realizations=Realization.r1i1p1f1, 
+        scenarios=[Scenario.ssp126, Scenario.ssp245, Scenario.ssp370,Scenario.ssp585], 
+        models=Model.CAS_ESM2_0
+    )
     pipe.set_resolution(Resolution(0.5, 0.5))
     pipe.load('pop', Data.population)
     pipe.load('tasmax', Data.tasmax)
