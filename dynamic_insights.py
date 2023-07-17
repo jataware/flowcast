@@ -137,6 +137,7 @@ class Realization(str, Enum):
 
 class Model(str, Enum):
     CAS_ESM2_0 = 'CAS-ESM2-0'
+    FGOALS_f3_L = 'FGOALS-f3-L'
     #TODO: other models as needed
 
 
@@ -149,6 +150,7 @@ class CMIP6Data(str, Enum):
 
 class OtherData(str, Enum):
     population = 'population'
+    MODIS = 'MODIS'
 
 
 class Frequency(str, Enum):
@@ -250,7 +252,9 @@ class Pipeline:
         #special case variables separate from cmip6 data
         match data:
             case OtherData.population:
-                var = get_population_data(self.scenarios)
+                var = self.get_population_data(self.scenarios)
+            case OtherData.MODIS:
+                raise NotImplementedError()
             case CMIP6Data():
                 assert model is not None, 'Must specify a model for CMIP6 data'
                 var = self.load_cmip6_data(data, model)
@@ -259,22 +263,78 @@ class Pipeline:
 
         self.bind_value(identifier, var)
 
-    def load_cmip6_data(self, data:CMIP6Data, model:Model) -> xr.Dataset:
+    def load_cmip6_data(self, variable:CMIP6Data, model:Model) -> xr.Dataset:
         """get an xarray with cmip6 data from the specified model"""
 
-        match model:
-            case Model.CAS_ESM2_0:
-                return self.CAS_ESM2_0_cmip_loader(data, self.realizations, self.scenarios)
-            #TODO: other models as needed
-            case _:
-                raise ValueError(f'Unrecognized model: {model}. Expected one of: {[*Model.__members__.values()]}')
+        all_realizations: list[xr.Dataset] = []
+        for realization in self.realizations:
+            all_scenarios: list[xr.Dataset] = []
+            for scenario in self.scenarios:
+        
+                match model:
+                    case Model.CAS_ESM2_0:
+                        data = self.CAS_ESM2_0_cmip_loader(variable, realization, scenario)
+                    
+                    case Model.FGOALS_f3_L:
+                        data = self.FGOALS_f3_L_cmip_loader(variable, realization, scenario)
 
+                    #TODO: other models as needed
+                    case _:
+                        raise ValueError(f'Unrecognized model: {model}. Expected one of: {[*Model.__members__.values()]}')
+                
+                # add a scenario coordinate
+                data = data.assign_coords(
+                    ssp=('ssp', np.array([scenario.value], dtype='object'))
+                )
+                all_scenarios.append(data)
+            
+            # combine the scenario data into one xarray
+            data = xr.concat(all_scenarios, dim='ssp')
+            all_realizations.append(data)
+
+        # combine all the data into one xarray with realization as a dimension
+        dataset = xr.concat(all_realizations, dim='realization')
+
+        return dataset
 
     @staticmethod
-    def CAS_ESM2_0_cmip_loader(variable: CMIP6Data, realizations: list[Realization], scenarios: list[Scenario]) -> xr.Dataset:
+    def CAS_ESM2_0_cmip_loader(variable: CMIP6Data, realization: Realization, scenario: Scenario) -> xr.Dataset:
         """Data loader for the CAS-ESM2-0 model"""
-        pdb.set_trace()
-        ...
+        return xr.open_dataset(f'data/cmip6/{variable}/{variable}_Amon_CAS-ESM2-0_{scenario}_{realization}_gn_201501-210012.nc')
+
+    @staticmethod
+    def FGOALS_f3_L_cmip_loader(variable: CMIP6Data, realization: Realization, scenario: Scenario) -> xr.Dataset:
+        """Data loader for the FGOALS-f3-L model"""        
+        return xr.open_dataset(f'data/cmip6/{variable}/{variable}_Amon_FGOALS-f3-L_{scenario}_{realization}_gr_201501-210012.nc')
+        
+    @staticmethod
+    def get_population_data(scenarios: list[Scenario]) -> xr.Dataset:
+        """get an xarray with the specified population data"""
+
+        all_scenarios: list[xr.Dataset] = []
+        for scenario in scenarios:
+
+            all_years: list[xr.Dataset] = []
+            ssp = scenario.value[:-2] # remove the last two characters (e.g., 'ssp126' -> 'ssp1')
+
+            for year in [2010, 2020, 2030, 2040, 2050, 2060, 2070, 2080, 2090, 2100]:
+                data = xr                                                                           \
+                    .open_dataset(f'data/population/{ssp.upper()}/Total/NetCDF/{ssp}_{year}.nc')    \
+                    .rename({f'{ssp}_{year}': 'population'})                                        \
+                    .assign_coords(
+                        time=pd.Timestamp(year, 1, 1), 
+                        ssp=('ssp', np.array([scenario.value], dtype='object')) #note for population, only the first number is relevant
+                    )
+                all_years.append(data)
+
+            # combine the scenario data into one xarray
+            data = xr.concat(all_years, dim='time')
+            all_scenarios.append(data)
+
+        # combine all the data into one xarray with ssp as a dimension
+        dataset = xr.concat(all_scenarios, dim='ssp')
+
+        return dataset
 
     #TODO: other models' data loaders as needed
 
@@ -304,36 +364,13 @@ class Pipeline:
 
 
 
-def get_population_data(scenarios: list[Scenario]) -> xr.Dataset:
-    """get an xarray with the specified population data"""
-
-    all_data: list[xr.Dataset] = []
-    for scenario in scenarios:
-
-        scenario_data: list[xr.Dataset] = []
-        ssp = scenario.value[:-2] # remove the last two characters (e.g., 'ssp126' -> 'ssp1')
-
-        for year in [2010, 2020, 2030, 2040, 2050, 2060, 2070, 2080, 2090, 2100]:
-            data = xr                                                                           \
-                .open_dataset(f'data/population/{ssp.upper()}/Total/NetCDF/{ssp}_{year}.nc')    \
-                .rename({f'{ssp}_{year}': 'population'})                                        \
-                .assign_coords(
-                    time=pd.Timestamp(year, 1, 1), 
-                    ssp=('ssp', np.array([scenario.value], dtype='object')) #note for population, only the first number is relevant
-                )
-            scenario_data.append(data)
-
-        # combine the scenario data into one xarray
-        scenario_data = xr.concat(scenario_data, dim='time')
-        all_data.append(scenario_data)
-
-    # combine all the data into one xarray with ssp as a dimension
-    all_data = xr.concat(all_data, dim='ssp')
-
-    return all_data
 
 
 
+def get_available_cmip6_data() -> list[tuple[CMIP6Data, Model, Scenario, Realization]]:
+    # parse all cmip6 data filepaths, and make a list of what is available (variable, model, scenario, realization)
+    pdb.set_trace()
+    ...
 
 
 
@@ -349,8 +386,8 @@ def heat_scenario():
     )
     pipe.set_resolution(Resolution(0.5, 0.5))
     pipe.set_frequency(Frequency.monthly)
-    pipe.load('tasmax', CMIP6Data.tasmax, Model.CAS_ESM2_0)
     pipe.load('pop', OtherData.population)
+    pipe.load('tasmax', CMIP6Data.tasmax, Model.CAS_ESM2_0)
     #...
 
     #TBD on inferring needed transformations, e.g. regridding, etc.
@@ -370,7 +407,17 @@ def heat_scenario():
 
 
 def crop_scenario():
-    raise NotImplementedError()
+    # raise NotImplementedError()
+
+    pipe = Pipeline(
+        realizations=Realization.r1i1p1f1,
+        scenarios=[Scenario.ssp126, Scenario.ssp245, Scenario.ssp370,Scenario.ssp585],
+    )
+    pipe.set_resolution(Resolution(0.5, 0.5))
+    pipe.set_frequency(Frequency.monthly)
+    pipe.load('tas', CMIP6Data.tas, Model.FGOALS_f3_L)
+    pipe.load('pr', CMIP6Data.pr, Model.FGOALS_f3_L)
+
 
 
 
