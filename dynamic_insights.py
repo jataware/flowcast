@@ -180,13 +180,13 @@ class Pipeline:
     def __init__(self, *,
             realizations: Realization|list[Realization],
             scenarios: Scenario|list[Scenario],
-            models: Model|list[Model]
+            # models: Model|list[Model]
         ):
         
         # static settings for data to be used in pipeline
         self.realizations: list[Realization] = realizations if isinstance(realizations, list) else [realizations]
         self.scenarios: list[Scenario] = scenarios if isinstance(scenarios, list) else [scenarios]
-        self.models: list[Model] = models if isinstance(models, list) else [models]
+        # self.models: list[Model] = models if isinstance(models, list) else [models]
         
         # dynamic settings for data to be used in pipeline
         self.resolution: Resolution|str|None = None
@@ -236,15 +236,15 @@ class Pipeline:
         """
         self.steps.append((self._do_set_frequency, (target,)))
 
-    def do_set_frequency(self, frequency:Frequency|str):
+    def _do_set_frequency(self, frequency:Frequency|str):
         self.frequency = frequency
 
     
-    def load(self, identifier:str, data: CMIP6Data|OtherData):
+    def load(self, identifier:str, data: CMIP6Data|OtherData, model:Model|None=None):
         """Append data load step to the pipeline"""
-        self.steps.append((self._do_load, (identifier, data,)))
+        self.steps.append((self._do_load, (identifier, data, model)))
 
-    def _do_load(self, identifier:str, data: CMIP6Data|OtherData):
+    def _do_load(self, identifier:str, data: CMIP6Data|OtherData, model:Model|None=None):
         """Perform execution of a data load step"""
 
         #special case variables separate from cmip6 data
@@ -252,19 +252,39 @@ class Pipeline:
             case OtherData.population:
                 var = get_population_data(self.scenarios)
             case CMIP6Data():
-                var = get_cmip_data(data, self.realizations, self.scenarios, self.models)
+                assert model is not None, 'Must specify a model for CMIP6 data'
+                var = self.load_cmip6_data(data, model)
             case _:
                 raise ValueError(f'Unrecognized data type: {data}. Expected one of: {CMIP6Data}, {OtherData}')
 
         self.bind_value(identifier, var)
 
+    def load_cmip6_data(self, data:CMIP6Data, model:Model) -> xr.Dataset:
+        """get an xarray with cmip6 data from the specified model"""
+
+        match model:
+            case Model.CAS_ESM2_0:
+                return self.CAS_ESM2_0_cmip_loader(data, self.realizations, self.scenarios)
+            #TODO: other models as needed
+            case _:
+                raise ValueError(f'Unrecognized model: {model}. Expected one of: {[*Model.__members__.values()]}')
+
+
+    @staticmethod
+    def CAS_ESM2_0_cmip_loader(variable: CMIP6Data, realizations: list[Realization], scenarios: list[Scenario]) -> xr.Dataset:
+        """Data loader for the CAS-ESM2-0 model"""
+        pdb.set_trace()
+        ...
+
+    #TODO: other models' data loaders as needed
+
+    
+    
     def compile(self):
         """Check that the pipeline is valid, insert inferred steps, etc."""
         assert not self.compiled, 'Pipeline has already been compiled'
         assert len(self.realizations) > 0, 'Must specify at least one realization with .set_realizations()'
         assert len(self.scenarios) > 0, 'Must specify at least one scenario with .set_scenarios()'
-        assert len(self.models) > 0, 'Must specify at least one model with .set_models()'
-        # assert self.resolution is not None, 'Must specify a target resolution with .set_resolution()'
 
         #TODO 
         # - type/size/shape checking, etc.
@@ -314,12 +334,6 @@ def get_population_data(scenarios: list[Scenario]) -> xr.Dataset:
 
 
 
-def get_cmip_data(variable: CMIP6Data|OtherData, realization: Realization, scenario: Scenario, model: Model) -> xr.Dataset:
-    """get an xarray with the specified cmip data"""
-    pdb.set_trace()
-    ...
-
-
 
 
 
@@ -332,10 +346,10 @@ def heat_scenario():
     pipe = Pipeline(
         realizations=Realization.r1i1p1f1, 
         scenarios=[Scenario.ssp126, Scenario.ssp245, Scenario.ssp370,Scenario.ssp585], 
-        models=Model.CAS_ESM2_0
     )
     pipe.set_resolution(Resolution(0.5, 0.5))
-    pipe.load('tasmax', CMIP6Data.tasmax)
+    pipe.set_frequency(Frequency.monthly)
+    pipe.load('tasmax', CMIP6Data.tasmax, Model.CAS_ESM2_0)
     pipe.load('pop', OtherData.population)
     #...
 
