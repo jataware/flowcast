@@ -188,7 +188,10 @@ class Pipeline:
         # static settings for data to be used in pipeline
         self.realizations: list[Realization] = realizations if isinstance(realizations, list) else [realizations]
         self.scenarios: list[Scenario] = scenarios if isinstance(scenarios, list) else [scenarios]
-        # self.models: list[Model] = models if isinstance(models, list) else [models]
+
+        assert len(self.realizations) > 0, 'Must specify at least one realization'
+        assert len(self.scenarios) > 0, 'Must specify at least one scenario'
+
         
         # dynamic settings for data to be used in pipeline
         self.resolution: Resolution|str|None = None
@@ -198,8 +201,7 @@ class Pipeline:
         # list of steps in the pipeline DAG
         self.steps: list[tuple[MethodType, tuple[Any, ...]]] = []
 
-        # keep track of whether pipeline has been compiled
-        self.compiled = False
+        # keep track of the most recent result during pipeline execution
         self.last_set_identifier: str|None = None
 
         # namespace for binding operation results to identifiers 
@@ -249,7 +251,7 @@ class Pipeline:
     def _do_load(self, identifier:str, data: CMIP6Data|OtherData, model:Model|None=None):
         """Perform execution of a data load step"""
 
-        #special case variables separate from cmip6 data
+        # use specific data loader depending on the requested data
         match data:
             case OtherData.population:
                 var = self.get_population_data(self.scenarios)
@@ -261,6 +263,10 @@ class Pipeline:
             case _:
                 raise ValueError(f'Unrecognized data type: {data}. Expected one of: {CMIP6Data}, {OtherData}')
 
+        #rename the data variable to match the given identifier
+        var = var.rename({data.value: identifier})
+        
+        # save the variable to the pipeline namespace under the given identifier
         self.bind_value(identifier, var)
 
     def load_cmip6_data(self, variable:CMIP6Data, model:Model) -> xr.Dataset:
@@ -339,26 +345,8 @@ class Pipeline:
     #TODO: other models' data loaders as needed
 
     
-    
-    def compile(self):
-        """Check that the pipeline is valid, insert inferred steps, etc."""
-        assert not self.compiled, 'Pipeline has already been compiled'
-        assert len(self.realizations) > 0, 'Must specify at least one realization with .set_realizations()'
-        assert len(self.scenarios) > 0, 'Must specify at least one scenario with .set_scenarios()'
-
-        #TODO 
-        # - type/size/shape checking, etc.
-        # - insert any necessary steps in between to make sure data operands match shape for operations
-        # - etc.
-
-        self.compiled = True
-
-
     def execute(self):
         """Execute the pipeline"""
-
-        assert self.compiled, 'Pipeline must be compiled before execution'
-
         for func, args in self.steps:
             func(*args)
 
@@ -388,11 +376,16 @@ def heat_scenario():
     pipe.set_frequency(Frequency.monthly)
     pipe.load('pop', OtherData.population)
     pipe.load('tasmax', CMIP6Data.tasmax, Model.CAS_ESM2_0)
+    
+    # pipe.threshold('heat', 'tasmax', 308.15)
+    # pipe.multiply('exposure', 'heat', 'pop')
+    # pipe.country_split('exposure', ['China', 'India', 'United States', 'Canada', 'Mexico'])
+    # pipe.sum('exposure', 'exposure', dims=['lat', 'lon'])
+    # pipe.save('exposure', 'exposure.nc')
     #...
 
     #TBD on inferring needed transformations, e.g. regridding, etc.
 
-    pipe.compile()
     pipe.execute()
 
     res = pipe.get_last_value()
@@ -407,7 +400,7 @@ def heat_scenario():
 
 
 def crop_scenario():
-    # raise NotImplementedError()
+    raise NotImplementedError()
 
     pipe = Pipeline(
         realizations=Realization.r1i1p1f1,
