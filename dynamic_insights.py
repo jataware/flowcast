@@ -157,7 +157,7 @@ class CMIP6Data(str, Enum):
 
 class OtherData(str, Enum):
     population = 'population'
-    MODIS = 'MODIS'
+    land_use = 'land_use'
 
 
 class Frequency(Enum):
@@ -181,7 +181,7 @@ class Threshold:
 
 @dataclass
 class Variable:
-    data: xr.Dataset|xr.DataArray #TODO: make just use dataarray
+    data: xr.DataArray
     Frequency: Frequency|str
     Resolution: Resolution|str
 
@@ -419,7 +419,7 @@ class Pipeline:
         match data:
             case OtherData.population:
                 var = self.get_population_data(self.scenarios)
-            case OtherData.MODIS:
+            case OtherData.land_use:
                 raise NotImplementedError()
             case CMIP6Data():
                 assert model is not None, 'Must specify a model for CMIP6 data'
@@ -427,11 +427,9 @@ class Pipeline:
             case _:
                 raise ValueError(f'Unrecognized data type: {data}. Expected one of: {CMIP6Data}, {OtherData}')
 
-        # rename the data variable to match the given identifier
-        var = var.rename({data.value: name})
-        
-        # create a variable container. Set the frequency and resolution to itself
-        var = Variable(var, name, name)
+        # extract dataarray from dataset, and wrap in a Variable. 
+        # set geo/time resolution to itself
+        var = Variable(var[data.value], name, name)
 
         # save the variable to the pipeline namespace under the given identifier
         self.bind_value(name, var)
@@ -512,6 +510,7 @@ class Pipeline:
         dataset = xr.concat(all_scenarios, dim='ssp')
 
         return dataset
+
 
     #TODO: other models' data loaders as needed
 
