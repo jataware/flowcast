@@ -108,6 +108,7 @@ from regrid import Resolution
 
 
 from itertools import count
+from functools import wraps
 from enum import Enum, auto
 from typing import Any
 from types import MethodType
@@ -242,30 +243,27 @@ class Pipeline:
         # tmp id counter
         self.tmp_id_counter = count(0)
 
-    
-    #TODO
-    #perhaps this decorator could be on the _do_ functions? 
-    # i.e. rename them to remove the _do_ prefix, and then the decorator splits off a compile version from the runtime version
-    def compile(self, method, check_unique_id:bool=True):
-        """
-        Decorator to make a method a compile-time method
-        When a compile-time method is called:
-        1. the method is added to the pipeline list of steps
-        2. the identifier is checked to be unique
 
-        Example Usage:
-            ```
-            @compile()
-            def load(self, identifier:str, data: CMIP6Data|OtherData, model:Model|None=None):
-                <implementation of _do_load()>
-            ```
-        causes at runtime:
-            ```
-            self.steps.append((self._do_load, (identifier, data, model)))
-            self._assert_id_is_unique_and_mark_used(identifier)
-            ```
+    def compile(self, *, check_id:bool=True):
         """
-        raise NotImplementedError()
+        Decorator to make a method a compile-time method.
+
+        Adds the method to the list of steps in the pipeline
+        checks that the result identifier is unique and marks it as used
+        """
+        def decorator(method:MethodType):
+            if check_id:
+                # @wraps(method)
+                def wrapper(self:Pipeline, id:str, *args, **kwargs):
+                    self.steps.append((method, (self, id, *args), kwargs))
+                    self._assert_id_is_unique_and_mark_used(id)
+            else:
+                # @wraps(method)
+                def wrapper(self:Pipeline, *args, **kwargs):
+                    self.steps.append((method, (self, *args), kwargs))
+            
+            return wrapper
+        return decorator
     
     
     def step_i_repr(self, index:int):
@@ -617,15 +615,14 @@ def heat_scenario():
     pipe.country_split('exposure1', 'exposure0', ['China', 'India', 'United States', 'Canada', 'Mexico'])
     pipe.sum('exposure2', 'exposure1', dims=['lat', 'lon'])
     pipe.save('exposure2', 'exposure.nc')
-    #...
 
     # run the pipeline
     pipe.execute()
 
-    # extract any results
-    res = pipe.get_last_value()
-    pop = pipe.get_value('pop')
-    tasmax = pipe.get_value('tasmax')
+    # e.g. extract any live results
+    # res = pipe.get_last_value()
+    # pop = pipe.get_value('pop')
+    # tasmax = pipe.get_value('tasmax')
 
 
 
