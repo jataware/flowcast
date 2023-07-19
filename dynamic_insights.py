@@ -103,13 +103,16 @@ import xarray as xr
 import rioxarray as rxr # needs to be imported?
 from rioxarray.exceptions import NoDataInBounds
 
-from enum import Enum
-from typing import Any
-from types import MethodType
-
-
 #TODO: pull this from elwood when it works
 from regrid import Resolution
+
+
+from itertools import count
+from enum import Enum, auto
+from typing import Any
+from types import MethodType
+from dataclasses import dataclass
+
 
 
 
@@ -153,10 +156,30 @@ class OtherData(str, Enum):
     MODIS = 'MODIS'
 
 
-class Frequency(str, Enum):
-    monthly = 'monthly'
-    yearly = 'yearly'
-    decadal = 'decadal'
+class Frequency(Enum):
+    monthly = auto()
+    yearly = auto()
+    decadal = auto()
+
+class ThresholdType(Enum):
+    greater_than = auto()
+    less_than = auto()
+    greater_than_or_equal_to = auto()
+    less_than_or_equal_to = auto()
+    equal_to = auto()
+    not_equal_to = auto()
+
+@dataclass
+class Threshold:
+    value: float
+    type: ThresholdType
+
+
+@dataclass
+class Variable:
+    data: xr.Dataset|xr.DataArray #TODO: make just use dataarray
+    Frequency: Frequency|str
+    Resolution: Resolution|str
 
 # Operations
 # - load
@@ -205,21 +228,37 @@ class Pipeline:
         self.last_set_identifier: str|None = None
 
         # namespace for binding operation results to identifiers 
-        self.env: dict[str, Any] = {}
+        self.env: dict[str, Variable] = {}
 
-    def bind_value(self, identifier:str, value: Any):
+        # tmp id counter
+        self.tmp_id_counter = count(0)
+
+    
+    def _next_tmp_id(self) -> str:
+        """get the next available tmp id (to be used for intermediate results)"""
+        while True: 
+            tmp_id = f'__tmp_{next(self.tmp_id_counter)}__'
+            if tmp_id not in self.env:
+                return tmp_id
+
+    
+    def bind_value(self, identifier:str, value: Variable):
         """Bind a value to an identifier in the pipeline namespace"""
+        assert identifier not in self.env, f'Identifier "{identifier}" already exists in pipeline namespace. All identifiers must be unique.'
         self.last_set_identifier = identifier
         self.env[identifier] = value
 
-    def get_value(self, identifier:str):
+
+    def get_value(self, identifier:str) -> Variable:
         """Get a value from the pipeline namespace"""
         return self.env[identifier]
     
-    def get_last_value(self):
+
+    def get_last_value(self) -> Variable:
         """Get the last value that was set in the pipeline namespace"""
         assert self.last_set_identifier is not None, 'No value has been set yet'
         return self.env[self.last_set_identifier]
+
 
     def set_resolution(self, target:Resolution|str):
         """
@@ -228,10 +267,14 @@ class Pipeline:
         """
         self.steps.append((self._do_set_resolution, (target,)))
 
+
     def _do_set_resolution(self, resolution:Resolution|str):
-        #TODO:
-        # Only run during operations on datasets, and only run if the dataset is not already at the target resolution.
+        """
+        Sets the current target resolution for the pipeline.
+        Regridding is only run during operations on datasets, and only if the dataset is not already at the target resolution.
+        """
         self.resolution = resolution
+
 
     def set_frequency(self, target:Frequency|str):
         """
@@ -240,13 +283,19 @@ class Pipeline:
         """
         self.steps.append((self._do_set_frequency, (target,)))
 
+
     def _do_set_frequency(self, frequency:Frequency|str):
+        """
+        Sets the current target frequency for the pipeline.
+        Temporal interpolation is only run during operations on datasets, and only if the dataset is not already at the target frequency.
+        """
         self.frequency = frequency
 
     
     def load(self, identifier:str, data: CMIP6Data|OtherData, model:Model|None=None):
         """Append data load step to the pipeline"""
         self.steps.append((self._do_load, (identifier, data, model)))
+
 
     def _do_load(self, identifier:str, data: CMIP6Data|OtherData, model:Model|None=None):
         """Perform execution of a data load step"""
@@ -263,11 +312,15 @@ class Pipeline:
             case _:
                 raise ValueError(f'Unrecognized data type: {data}. Expected one of: {CMIP6Data}, {OtherData}')
 
-        #rename the data variable to match the given identifier
+        # rename the data variable to match the given identifier
         var = var.rename({data.value: identifier})
         
+        # create a variable container. Set the frequency and resolution to itself
+        var = Variable(var, identifier, identifier)
+
         # save the variable to the pipeline namespace under the given identifier
         self.bind_value(identifier, var)
+
 
     def load_cmip6_data(self, variable:CMIP6Data, model:Model) -> xr.Dataset:
         """get an xarray with cmip6 data from the specified model"""
@@ -303,16 +356,19 @@ class Pipeline:
 
         return dataset
 
+
     @staticmethod
     def CAS_ESM2_0_cmip_loader(variable: CMIP6Data, realization: Realization, scenario: Scenario) -> xr.Dataset:
         """Data loader for the CAS-ESM2-0 model"""
         return xr.open_dataset(f'data/cmip6/{variable}/{variable}_Amon_CAS-ESM2-0_{scenario}_{realization}_gn_201501-210012.nc')
 
+
     @staticmethod
     def FGOALS_f3_L_cmip_loader(variable: CMIP6Data, realization: Realization, scenario: Scenario) -> xr.Dataset:
         """Data loader for the FGOALS-f3-L model"""        
         return xr.open_dataset(f'data/cmip6/{variable}/{variable}_Amon_FGOALS-f3-L_{scenario}_{realization}_gr_201501-210012.nc')
-        
+
+  
     @staticmethod
     def get_population_data(scenarios: list[Scenario]) -> xr.Dataset:
         """get an xarray with the specified population data"""
@@ -344,7 +400,49 @@ class Pipeline:
 
     #TODO: other models' data loaders as needed
 
-    
+
+    def threshold(self, out_identifier:str, in_identifier:str, threshold:Threshold):
+        """
+        Append a threshold step to the pipeline. 
+        e.g. 
+            ```
+            threshold('result', 'tasmax', Threshold(308.15, ThresholdType.greater_than))
+            ``` 
+        is equivalent to:
+            ```
+            result = tasmax > 308.15
+            ```
+        """
+        self.steps.append((self._do_threshold, (out_identifier, in_identifier, threshold)))
+        
+
+    def _do_threshold(self, out_identifier:str, in_identifier:str, threshold:Threshold):
+        """Perform execution of a threshold step"""
+        
+        #first make sure the data matches the specified resolution and frequency
+        if self.resolution is not None and self.env[in_identifier].Resolution != self.resolution:
+            tmp_id = self._next_tmp_id()
+            self._do_geo_regrid(tmp_id, in_identifier, self.resolution)
+            in_identifier = tmp_id
+        if self.frequency is not None and self.env[in_identifier].Frequency != self.frequency:
+            tmp_id = self._next_tmp_id()
+            self._do_time_regrid(tmp_id, in_identifier, self.frequency)
+            in_identifier = tmp_id
+        
+        pdb.set_trace()
+        ...
+
+
+    def time_regrid(self, out_identifier:str, in_identifier:str, target_frequency:Frequency|str):
+        raise NotImplementedError()
+    def _do_time_regrid(self, out_identifier:str, in_identifier:str, target_frequency:Frequency|str):
+        raise NotImplementedError()
+    def geo_regrid(self, out_identifier:str, in_identifier:str, target_resolution:Resolution|str):
+        raise NotImplementedError()
+    def _do_geo_regrid(self, out_identifier:str, in_identifier:str, target_resolution:Resolution|str):
+        raise NotImplementedError()
+
+
     def execute(self):
         """Execute the pipeline"""
         for func, args in self.steps:
@@ -372,16 +470,18 @@ def heat_scenario():
         realizations=Realization.r1i1p1f1, 
         scenarios=[Scenario.ssp126, Scenario.ssp245, Scenario.ssp370,Scenario.ssp585], 
     )
-    pipe.set_resolution(Resolution(0.5, 0.5))
-    pipe.set_frequency(Frequency.monthly)
+    # pipe.set_resolution(Resolution(0.5, 0.5))
+    # pipe.set_frequency(Frequency.monthly)
+    pipe.set_resolution('tasmax')
+    pipe.set_frequency('tasmax')
     pipe.load('pop', OtherData.population)
     pipe.load('tasmax', CMIP6Data.tasmax, Model.CAS_ESM2_0)
     
-    # pipe.threshold('heat', 'tasmax', 308.15)
-    # pipe.multiply('exposure', 'heat', 'pop')
-    # pipe.country_split('exposure', ['China', 'India', 'United States', 'Canada', 'Mexico'])
-    # pipe.sum('exposure', 'exposure', dims=['lat', 'lon'])
-    # pipe.save('exposure', 'exposure.nc')
+    pipe.threshold('heat', 'tasmax', Threshold(308.15, ThresholdType.greater_than))
+    # pipe.multiply('exposure0', 'heat', 'pop')
+    # pipe.country_split('exposure1', 'exposure0', ['China', 'India', 'United States', 'Canada', 'Mexico'])
+    # pipe.sum('exposure2', 'exposure1', dims=['lat', 'lon'])
+    # pipe.save('exposure2', 'exposure.nc')
     #...
 
     #TBD on inferring needed transformations, e.g. regridding, etc.
