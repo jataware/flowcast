@@ -109,6 +109,7 @@ from regrid import Resolution
 
 from itertools import count
 from functools import wraps
+from inspect import signature
 from enum import Enum, auto
 from typing import Any
 from types import MethodType
@@ -201,10 +202,10 @@ class Variable:
 # - interpolate
 # - split
 
-
+class ResultID(str): ...
+class OperandID(str): ...
 
 #TODO:
-# - decorator for compile-time functions that automatically adds the step to the list of steps, and checks that the identifier is unique
 # - Variables should only use xarray.DataArray, not xarray.Dataset
 
 class Pipeline:
@@ -227,7 +228,6 @@ class Pipeline:
         # dynamic settings for data to be used in pipeline
         self.resolution: Resolution|str|None = None
         self.frequency: Frequency|str|None = None
-        #target country split?
         
         # list of steps in the pipeline DAG
         self.steps: list[tuple[MethodType, tuple[Any, ...]]] = []
@@ -245,7 +245,7 @@ class Pipeline:
         self.tmp_id_counter = count(0)
 
 
-    def compile(*, out_id:bool, in_ids:int):
+    def compile(method:MethodType):
         """
         Decorator to make a method a compile-time method.
 
@@ -253,63 +253,92 @@ class Pipeline:
         checks the the input identifiers already exist in the pipeline namespace
         checks that the result identifier is unique and marks it as used
 
-        Args:
-            out_id: whether the method binds a result to an identifier
-            in_ids: how many identifiers the method takes as input
+        NOTE: All identifiers in compiled functions must use either the ResultID or OperandID type
+        identifiers that are not correctly marked will not be properly checked during compilation
+        Also all identifiers must be positional arguments, not keyword arguments
         """
-        def decorator(method:MethodType):
-            # @wraps(method)
-            def wrapper(self:'Pipeline', *args, **kwargs):
 
-                # append the function to the list of steps in the pipeline
-                self.steps.append((method, (self, *args), kwargs))
+        # determine the function signature index of the result and operand identifiers if any
+        sig = signature(method)
+        params = list(sig.parameters.values())
+        result_idx = []
+        operand_idx = []
+        for i, param in enumerate(params[1:]): #skip self
+            if param.annotation == ResultID:
+                result_idx.append(i)
+            elif param.annotation == OperandID:
+                operand_idx.append(i)
 
-                # check that the input identifiers exist in the pipeline namespace
-                for id in args[int(out_id):int(out_id)+in_ids]:
-                    self._assert_id_exists(id)  
-                
-                # check that the result identifier is unique and mark it as used
-                if out_id:
-                    self._assert_id_is_unique_and_mark_used(id)
 
-            return wrapper
-        return decorator
+        #TODO: perhaps we don't need this restriction
+        assert len(result_idx) <= 1, f'ERROR compiling "Pipeline.{method.__name__}". Compiled functions can only have one result identifier'
+
+        # @wraps(method)
+        def wrapper(self:'Pipeline', *args, **kwargs):
+
+            # append the function to the list of steps in the pipeline
+            self.steps.append((method, (self,) + args, kwargs))
+
+            # check that any operand identifiers exist in the pipeline namespace
+            for i in operand_idx:
+                self._assert_id_exists(args[i])
+            
+            # check that the result identifier is unique and mark it as used
+            for i in result_idx:
+                self._assert_id_is_unique_and_mark_used(args[i])
+
+        # save the unmodified original function in for use inside pipeline methods
+        wrapper.unwrapped = method
+        
+        return wrapper
+        
     
-    
-    def step_i_repr(self, index:int):
-        """get the repr for the i'th step in the pipeline"""
-        return self.step_repr(self.steps[index])
-    
-    def step_repr(self, step:tuple[MethodType, tuple[Any, ...]]):
+    @staticmethod
+    def step_repr(step:tuple[MethodType, tuple[Any, ...], dict[str, Any]]):
         """get the repr for the given step in the pipeline"""
-        func, args = step
+        func, args, kwargs = step
+        args = args[1:] #skip self. Removing this causes infinite recursion
         name = func.__name__
-        if func.__name__.startswith('_do_'):
-            name = name[4:]
-        return f'Pipeline.{name}({", ".join([str(arg) for arg in args])})'
+        args_str = ', '.join([str(arg) for arg in args])
+        kwargs_str = ', '.join([f'{key}={value}' for key, value in kwargs.items()])
+        return f'Pipeline.{name}({", ".join((args_str, kwargs_str))})'
+    
+
+    def __repr__(self):
+        """get the repr for the pipeline"""
+        return '\n'.join([f'{i}: {Pipeline.step_repr(step)}' for i, step in enumerate(self.steps)])
 
     
     def _next_tmp_id(self) -> str:
-        """get the next available tmp id (to be used for intermediate results)"""
+        """(runtime) get the next available tmp id (to be used for intermediate results)"""
         while True: 
             tmp_id = f'__tmp_{next(self.tmp_id_counter)}__'
-            if tmp_id not in self.env:
+            if tmp_id not in self.compiled_ids:
                 return tmp_id
 
     
     def _assert_id_exists(self, identifier:str):
-        """(Compile-time) assert that the given identifier exists in the pipeline namespace"""
-        if identifier not in self.env:
-            raise ValueError(f'Operand identifier "{identifier}" does not exist in pipeline at step {len(self.steps)}: {self.step_i_repr(-1)}')
+        """
+        (Compile-time) assert that the given identifier exists in the pipeline namespace
+        Should be called inside any compile-time functions that will use a variable from the pipeline namespace
+        NOTE: always call after appending the current step to the pipeline
+
+        @compile handles this automatically
+        """
+        if identifier not in self.compiled_ids:
+            pdb.set_trace()
+            raise ValueError(f'Operand identifier "{identifier}" does not exist in pipeline at step {len(self.steps)-1}: {self.step_repr(self.steps[-1])}')
     
     def _assert_id_is_unique_and_mark_used(self, identifier:str):
         """
         (Compile-time) assert that the given identifier is unique, and add it to the compiled_ids set
         Should be called inside any compile-time functions that will add a variable to the pipeline namespace
-        NOTE: always call after appending the step to the pipeline
+        NOTE: always call after appending the current step to the pipeline
+
+        @compile handles this automatically
         """
         if identifier in self.compiled_ids:
-            raise ValueError(f'Tried to reuse "{identifier}" for result identifier on step {len(self.steps)}: {self.step_i_repr(-1)}. All identifiers must be unique.')
+            raise ValueError(f'Tried to reuse "{identifier}" for result identifier on step {len(self.steps)-1}: {self.step_repr(self.steps[-1])}. All identifiers must be unique.')
         self.compiled_ids.add(identifier)
 
     
@@ -332,7 +361,7 @@ class Pipeline:
         return self.env[self.last_set_identifier]
 
 
-    @compile(out_id=False, in_ids=0)
+    @compile
     def set_geo_resolution(self, target:Resolution|str):
         """
         Set the current target geo resolution for the pipeline
@@ -345,7 +374,7 @@ class Pipeline:
         self.resolution = target
 
 
-    @compile(out_id=False, in_ids=0)
+    @compile
     def set_time_resolution(self, target:Frequency|str):
         """
         Set the current target temporal resolution for the pipeline
@@ -370,18 +399,21 @@ class Pipeline:
             elif func == self._do_set_geo_resolution:
                 geo_res = True
         if not time_res:
-            raise ValueError('Pipeline must have a target temporal resolution before appending binary operations')
+            raise ValueError('Pipeline must have a target temporal resolution before performing binary operations')
         if not geo_res:
-            raise ValueError('Pipeline must have a target geo resolution before appending binary operations')
+            raise ValueError('Pipeline must have a target geo resolution before performing binary operations')
 
-    def load(self, identifier:str, data: CMIP6Data|OtherData, model:Model|None=None):
-        """Append data load step to the pipeline"""
-        self.steps.append((self._do_load, (identifier, data, model), {}))
-        self._assert_id_is_unique_and_mark_used(identifier)
+    
+    @compile
+    def load(self, name:ResultID, data:CMIP6Data|OtherData, model:Model|None=None):
+        """
+        Load existing data into the pipeline
 
-
-    def _do_load(self, identifier:str, data: CMIP6Data|OtherData, model:Model|None=None):
-        """Perform execution of a data load step"""
+        Args:
+            identifier (str): the identifier to bind the data to in the pipeline namespace
+            data (enum): the data to load
+            model (enum, optional): the model to load the data from (required for CMIP6 data)
+        """
 
         # use specific data loader depending on the requested data
         match data:
@@ -396,13 +428,13 @@ class Pipeline:
                 raise ValueError(f'Unrecognized data type: {data}. Expected one of: {CMIP6Data}, {OtherData}')
 
         # rename the data variable to match the given identifier
-        var = var.rename({data.value: identifier})
+        var = var.rename({data.value: name})
         
         # create a variable container. Set the frequency and resolution to itself
-        var = Variable(var, identifier, identifier)
+        var = Variable(var, name, name)
 
         # save the variable to the pipeline namespace under the given identifier
-        self.bind_value(identifier, var)
+        self.bind_value(name, var)
 
 
     def load_cmip6_data(self, variable:CMIP6Data, model:Model) -> xr.Dataset:
@@ -484,98 +516,104 @@ class Pipeline:
     #TODO: other models' data loaders as needed
 
 
-    def threshold(self, out_identifier:str, in_identifier:str, threshold:Threshold):
+    @compile
+    def threshold(self, y:ResultID, x:OperandID, threshold:Threshold):
         """
-        Append a threshold step to the pipeline. 
-        e.g. 
-            ```
-            threshold('result', 'tasmax', Threshold(308.15, ThresholdType.greater_than))
-            ``` 
-        is equivalent to:
-            ```
-            result = tasmax > 308.15
-            ```
+        Threshold a dataset, e.g. `y = x > threshold` or `y = x <= threshold`
         """
-        self.steps.append((self._do_threshold, (out_identifier, in_identifier, threshold), {}))
-        self._assert_id_is_unique_and_mark_used(out_identifier)
-        
-
-    def _do_threshold(self, out_identifier:str, in_identifier:str, threshold:Threshold):
-        """Perform execution of a threshold step"""
 
         #first make sure the data matches the specified resolution and frequency
-        if self.resolution is not None and self.env[in_identifier].Resolution != self.resolution:
+        if self.resolution is not None and self.env[x].Resolution != self.resolution:
             tmp_id = self._next_tmp_id()
-            self._do_geo_regrid(tmp_id, in_identifier, self.resolution)
-            in_identifier = tmp_id
-        if self.frequency is not None and self.env[in_identifier].Frequency != self.frequency:
+            self.geo_regrid.unwrapped(tmp_id, x, self.resolution)
+            x = tmp_id
+        if self.frequency is not None and self.env[x].Frequency != self.frequency:
             tmp_id = self._next_tmp_id()
-            self._do_time_regrid(tmp_id, in_identifier, self.frequency)
-            in_identifier = tmp_id
+            self.time_regrid.unwrapped(tmp_id, x, self.frequency)
+            x = tmp_id
         
         pdb.set_trace()
         ...
 
-
-    def time_regrid(self, out_identifier:str, in_identifier:str, target_frequency:Frequency|str):
-        """Append a time regrid step to the pipeline"""
-        self.steps.append((self._do_time_regrid, (out_identifier, in_identifier, target_frequency), {}))
-        self._assert_id_is_unique_and_mark_used(out_identifier)
-
-
-    def _do_time_regrid(self, out_identifier:str, in_identifier:str, target_frequency:Frequency|str):
+    @compile
+    def time_regrid(self, y:ResultID, x:OperandID, target:Frequency|str):
+        """
+        regrid the given data to the given temporal frequency
+        
+        Args:
+            y (str): the identifier to bind the result to in the pipeline namespace
+            x (str): the identifier of the data to regrid
+            target (Frequency|str): the target temporal frequency to regrid to.
+                Can either be a fixed Frequency object, e.g. Frequency.monthly,
+                or target the frequency of an existing dataset in the pipeline by name, e.g. 'tasmax'
+        """
         raise NotImplementedError()
     
 
-    def geo_regrid(self, out_identifier:str, in_identifier:str, target_resolution:Resolution|str):
-        """Append a geo regrid step to the pipeline"""
-        self.steps.append((self._do_geo_regrid, (out_identifier, in_identifier, target_resolution), {}))
-        self._assert_id_is_unique_and_mark_used(out_identifier)
-    
-    
-    def _do_geo_regrid(self, out_identifier:str, in_identifier:str, target_resolution:Resolution|str):
+    @compile
+    def geo_regrid(self, y:ResultID, x:OperandID, target:Resolution|str):
+        """
+        regrid the given data to the given geo resolution
+
+        Args:
+            result (str): the identifier to bind the result to in the pipeline namespace
+            x (str): the identifier of the data to regrid
+            target (Resolution|str): the target geo resolution to regrid to.
+                Can either be a fixed Resolution object, e.g. Resolution(0.5, 0.5),
+                or target the resolution of an existing dataset in the pipeline by name, e.g. 'tasmax'
+        """
         raise NotImplementedError()
 
 
-    def multiply(self, out_identifier:str, in_identifier1:str, in_identifier2:str):
-        """Append a multiply step to the pipeline"""
-        self.steps.append((self._do_multiply, (out_identifier, in_identifier1, in_identifier2), {}))
-        self._assert_id_is_unique_and_mark_used(out_identifier)
+    @compile
+    def multiply(self, y:ResultID, x1:OperandID, x2:OperandID):
+        """
+        Multiply two datasets together, i.e. `y = x1 * x2`
 
-    
-    def _do_multiply(self, out_identifier:str, in_identifier1:str, in_identifier2:str):
+        Args:
+            y (str): the identifier to bind the result to in the pipeline namespace
+            x1 (str): the identifier of the left operand
+            x2 (str): the identifier of the right operand
+        """
         raise NotImplementedError()
     
 
-    def country_split(self, out_identifier:str, in_identifier:str, countries:list[str]):
-        """Append a country split step to the pipeline"""
-        self.steps.append((self._do_country_split, (out_identifier, in_identifier, countries), {}))
-        self._assert_id_is_unique_and_mark_used(out_identifier)
+    @compile
+    def country_split(self, y:ResultID, x:OperandID, countries:list[str]):
+        """
+        Adds a new 'country' dimension to the data, and separates splits out the data at each given country
 
-    
-    def _do_country_split(self, out_identifier:str, in_identifier:str, countries:list[str]):
+        Args:
+            y (str): the identifier to bind the result to in the pipeline namespace
+            x (str): the identifier of the data to split
+            countries (list[str]): the list of countries to split the data by
+        """
         raise NotImplementedError()
     
 
-    def sum(self, out_identifier:str, in_identifier:str, dims:list[str]):
-        """Append a sum step to the pipeline"""
-        self.steps.append((self._do_sum, (out_identifier, in_identifier, dims), {}))
-        self._assert_id_is_unique_and_mark_used(out_identifier)
+    @compile
+    def sum(self, y:ResultID, x:OperandID, dims:list[str]):
+        """
+        Sum the data along the given dimensions
 
-
-    def _do_sum(self, out_identifier:str, in_identifier:str, dims:list[str]):
+        Args:
+            y (str): the identifier to bind the result to in the pipeline namespace
+            x (str): the identifier of the data to sum
+            dims (list[str]): the list of dimensions to sum over
+        """
         raise NotImplementedError()
 
+    @compile
+    def save(self, x:OperandID, path:str):
+        """
+        Save the data to the given path
 
-    def save(self, identifier:str, filepath:str):
-        """Append a save step to the pipeline"""
-        self.steps.append((self._do_save, (identifier, filepath), {}))
-
-
-    def _do_save(self, identifier:str, filepath:str):
-        """Perform execution of a save step"""
-        var = self.get_value(identifier)
-        var.data.to_netcdf(filepath)
+        Args:
+            x (str): the identifier of the data to save
+            path (str): the path to save the data to
+        """
+        var = self.get_value(x)
+        var.data.to_netcdf(path)
 
 
     def execute(self):
@@ -596,14 +634,12 @@ def get_available_cmip6_data() -> list[tuple[CMIP6Data, Model, Scenario, Realiza
 
 
 
-
-#TODO: parameterize function with scenario, etc.
 def heat_scenario():
 
 
     pipe = Pipeline(
         realizations=Realization.r1i1p1f1, 
-        scenarios=[Scenario.ssp126, Scenario.ssp245, Scenario.ssp370,Scenario.ssp585], 
+        scenarios=[Scenario.ssp126, Scenario.ssp245, Scenario.ssp370, Scenario.ssp585],
     )
     
     # e.g. target fixed geo/temporal resolutions
