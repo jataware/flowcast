@@ -462,6 +462,9 @@ class Pipeline:
             
             # combine the scenario data into one xarray
             data = xr.concat(all_scenarios, dim='ssp')
+            data = data.assign_coords(
+                realization=('realization', np.array([realization.value], dtype='object'))
+            )
             all_realizations.append(data)
 
         # combine all the data into one xarray with realization as a dimension
