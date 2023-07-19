@@ -114,6 +114,7 @@ from types import MethodType
 from dataclasses import dataclass
 
 
+from rich import print, traceback; traceback.install(show_locals=True)
 
 
 import pdb
@@ -199,6 +200,11 @@ class Variable:
 # - split
 
 
+
+#TODO:
+# - decorator for compile-time functions that automatically adds the step to the list of steps, and checks that the identifier is unique
+# - Variables should only use xarray.DataArray, not xarray.Dataset
+
 class Pipeline:
 
 
@@ -230,8 +236,49 @@ class Pipeline:
         # namespace for binding operation results to identifiers 
         self.env: dict[str, Variable] = {}
 
+        # keep track of all identifiers while the pipeline is being compiled
+        self.compiled_ids: set[str] = set()
+
         # tmp id counter
         self.tmp_id_counter = count(0)
+
+    
+    #TODO
+    #perhaps this decorator could be on the _do_ functions? 
+    # i.e. rename them to remove the _do_ prefix, and then the decorator splits off a compile version from the runtime version
+    def compile(self, method, check_unique_id:bool=True):
+        """
+        Decorator to make a method a compile-time method
+        When a compile-time method is called:
+        1. the method is added to the pipeline list of steps
+        2. the identifier is checked to be unique
+
+        Example Usage:
+            ```
+            @compile()
+            def load(self, identifier:str, data: CMIP6Data|OtherData, model:Model|None=None):
+                <implementation of _do_load()>
+            ```
+        causes at runtime:
+            ```
+            self.steps.append((self._do_load, (identifier, data, model)))
+            self._assert_id_is_unique_and_mark_used(identifier)
+            ```
+        """
+        raise NotImplementedError()
+    
+    
+    def step_i_repr(self, index:int):
+        """get the repr for the i'th step in the pipeline"""
+        return self.step_repr(self.steps[index])
+    
+    def step_repr(self, step:tuple[MethodType, tuple[Any, ...]]):
+        """get the repr for the given step in the pipeline"""
+        func, args = step
+        name = func.__name__
+        if func.__name__.startswith('_do_'):
+            name = name[4:]
+        return f'Pipeline.{name}({", ".join([str(arg) for arg in args])})'
 
     
     def _next_tmp_id(self) -> str:
@@ -241,6 +288,18 @@ class Pipeline:
             if tmp_id not in self.env:
                 return tmp_id
 
+    
+    def _assert_id_is_unique_and_mark_used(self, identifier:str):
+        """
+        Assert that the given identifier is unique, and add it to the compiled_ids set
+        Should be called inside any compile-time functions that will add a variable to the pipeline namespace
+        NOTE: always call after appending the step to the pipeline
+        """
+        if identifier in self.compiled_ids:
+            raise ValueError(f'Tried to reuse identifier "{identifier}" on step {len(self.steps)}: {self.step_repr(-1)}. All identifiers must be unique.')
+        self.compiled_ids.add(identifier)
+
+    
     
     def bind_value(self, identifier:str, value: Variable):
         """Bind a value to an identifier in the pipeline namespace"""
@@ -260,15 +319,15 @@ class Pipeline:
         return self.env[self.last_set_identifier]
 
 
-    def set_resolution(self, target:Resolution|str):
+    def set_geo_resolution(self, target:Resolution|str):
         """
         Append a set_resolution step to the pipeline. 
         Resolution can either be a fixed Resolution object, or target the resolution of an existing dataset by name.
         """
-        self.steps.append((self._do_set_resolution, (target,)))
+        self.steps.append((self._do_set_geo_resolution, (target,)))
 
 
-    def _do_set_resolution(self, resolution:Resolution|str):
+    def _do_set_geo_resolution(self, resolution:Resolution|str):
         """
         Sets the current target resolution for the pipeline.
         Regridding is only run during operations on datasets, and only if the dataset is not already at the target resolution.
@@ -276,15 +335,15 @@ class Pipeline:
         self.resolution = resolution
 
 
-    def set_frequency(self, target:Frequency|str):
+    def set_time_resolution(self, target:Frequency|str):
         """
         Append a set_frequency step to the pipeline.
         Frequency can either be a fixed Frequency object, or target the frequency of an existing dataset by name.
         """
-        self.steps.append((self._do_set_frequency, (target,)))
+        self.steps.append((self._do_set_time_resolution, (target,)))
 
 
-    def _do_set_frequency(self, frequency:Frequency|str):
+    def _do_set_time_resolution(self, frequency:Frequency|str):
         """
         Sets the current target frequency for the pipeline.
         Temporal interpolation is only run during operations on datasets, and only if the dataset is not already at the target frequency.
@@ -292,9 +351,26 @@ class Pipeline:
         self.frequency = frequency
 
     
+    def _assert_pipe_has_resolution(self):
+        """
+        check if the pipeline has already set a target geo and temporal resolution
+        Should be called before adding any binary operations to the pipeline
+        """
+        time_res, geo_res = False, False
+        for func, _ in self.steps:
+            if func == self._do_set_time_resolution:
+                time_res = True
+            elif func == self._do_set_geo_resolution:
+                geo_res = True
+        if not time_res:
+            raise ValueError('Pipeline must have a target temporal resolution before appending binary operations')
+        if not geo_res:
+            raise ValueError('Pipeline must have a target geo resolution before appending binary operations')
+
     def load(self, identifier:str, data: CMIP6Data|OtherData, model:Model|None=None):
         """Append data load step to the pipeline"""
         self.steps.append((self._do_load, (identifier, data, model)))
+        self._assert_id_is_unique_and_mark_used(identifier)
 
 
     def _do_load(self, identifier:str, data: CMIP6Data|OtherData, model:Model|None=None):
@@ -414,11 +490,12 @@ class Pipeline:
             ```
         """
         self.steps.append((self._do_threshold, (out_identifier, in_identifier, threshold)))
+        self._assert_id_is_unique_and_mark_used(out_identifier)
         
 
     def _do_threshold(self, out_identifier:str, in_identifier:str, threshold:Threshold):
         """Perform execution of a threshold step"""
-        
+
         #first make sure the data matches the specified resolution and frequency
         if self.resolution is not None and self.env[in_identifier].Resolution != self.resolution:
             tmp_id = self._next_tmp_id()
@@ -434,13 +511,64 @@ class Pipeline:
 
 
     def time_regrid(self, out_identifier:str, in_identifier:str, target_frequency:Frequency|str):
-        raise NotImplementedError()
+        """Append a time regrid step to the pipeline"""
+        self.steps.append((self._do_time_regrid, (out_identifier, in_identifier, target_frequency)))
+        self._assert_id_is_unique_and_mark_used(out_identifier)
+
+
     def _do_time_regrid(self, out_identifier:str, in_identifier:str, target_frequency:Frequency|str):
         raise NotImplementedError()
+    
+
     def geo_regrid(self, out_identifier:str, in_identifier:str, target_resolution:Resolution|str):
-        raise NotImplementedError()
+        """Append a geo regrid step to the pipeline"""
+        self.steps.append((self._do_geo_regrid, (out_identifier, in_identifier, target_resolution)))
+        self._assert_id_is_unique_and_mark_used(out_identifier)
+    
+    
     def _do_geo_regrid(self, out_identifier:str, in_identifier:str, target_resolution:Resolution|str):
         raise NotImplementedError()
+
+
+    def multiply(self, out_identifier:str, in_identifier1:str, in_identifier2:str):
+        """Append a multiply step to the pipeline"""
+        self.steps.append((self._do_multiply, (out_identifier, in_identifier1, in_identifier2)))
+        self._assert_id_is_unique_and_mark_used(out_identifier)
+
+    
+    def _do_multiply(self, out_identifier:str, in_identifier1:str, in_identifier2:str):
+        raise NotImplementedError()
+    
+
+    def country_split(self, out_identifier:str, in_identifier:str, countries:list[str]):
+        """Append a country split step to the pipeline"""
+        self.steps.append((self._do_country_split, (out_identifier, in_identifier, countries)))
+        self._assert_id_is_unique_and_mark_used(out_identifier)
+
+    
+    def _do_country_split(self, out_identifier:str, in_identifier:str, countries:list[str]):
+        raise NotImplementedError()
+    
+
+    def sum(self, out_identifier:str, in_identifier:str, dims:list[str]):
+        """Append a sum step to the pipeline"""
+        self.steps.append((self._do_sum, (out_identifier, in_identifier, dims)))
+        self._assert_id_is_unique_and_mark_used(out_identifier)
+
+
+    def _do_sum(self, out_identifier:str, in_identifier:str, dims:list[str]):
+        raise NotImplementedError()
+
+
+    def save(self, identifier:str, filepath:str):
+        """Append a save step to the pipeline"""
+        self.steps.append((self._do_save, (identifier, filepath)))
+
+
+    def _do_save(self, identifier:str, filepath:str):
+        """Perform execution of a save step"""
+        var = self.get_value(identifier)
+        var.data.to_netcdf(filepath)
 
 
     def execute(self):
@@ -470,32 +598,35 @@ def heat_scenario():
         realizations=Realization.r1i1p1f1, 
         scenarios=[Scenario.ssp126, Scenario.ssp245, Scenario.ssp370,Scenario.ssp585], 
     )
-    # pipe.set_resolution(Resolution(0.5, 0.5))
-    # pipe.set_frequency(Frequency.monthly)
-    pipe.set_resolution('tasmax')
-    pipe.set_frequency('tasmax')
+    
+    # e.g. target fixed geo/temporal resolutions
+    # pipe.set_geo_resolution(Resolution(0.5, 0.5))
+    # pipe.set_time_resolution(Frequency.monthly)
+
+    # e.g. target geo/temporal resolution of existing data in pipeline
+    pipe.set_geo_resolution('tasmax')
+    pipe.set_time_resolution('tasmax')
+
+    # load the data
     pipe.load('pop', OtherData.population)
     pipe.load('tasmax', CMIP6Data.tasmax, Model.CAS_ESM2_0)
     
+    # operations on the data to perform the scenario
     pipe.threshold('heat', 'tasmax', Threshold(308.15, ThresholdType.greater_than))
-    # pipe.multiply('exposure0', 'heat', 'pop')
-    # pipe.country_split('exposure1', 'exposure0', ['China', 'India', 'United States', 'Canada', 'Mexico'])
-    # pipe.sum('exposure2', 'exposure1', dims=['lat', 'lon'])
-    # pipe.save('exposure2', 'exposure.nc')
+    pipe.multiply('exposure0', 'heat', 'pop')
+    pipe.country_split('exposure1', 'exposure0', ['China', 'India', 'United States', 'Canada', 'Mexico'])
+    pipe.sum('exposure2', 'exposure1', dims=['lat', 'lon'])
+    pipe.save('exposure2', 'exposure.nc')
     #...
 
-    #TBD on inferring needed transformations, e.g. regridding, etc.
-
+    # run the pipeline
     pipe.execute()
 
+    # extract any results
     res = pipe.get_last_value()
     pop = pipe.get_value('pop')
     tasmax = pipe.get_value('tasmax')
 
-    pdb.set_trace()
-    ...
-
-    #every step print out: data type and data dims
 
 
 
