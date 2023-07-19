@@ -115,6 +115,7 @@ from types import MethodType
 from dataclasses import dataclass
 
 
+# pretty printing
 from rich import print, traceback; traceback.install(show_locals=True)
 
 
@@ -244,24 +245,33 @@ class Pipeline:
         self.tmp_id_counter = count(0)
 
 
-    def compile(self, *, check_id:bool=True):
+    def compile(*, out_id:bool, in_ids:int):
         """
         Decorator to make a method a compile-time method.
 
         Adds the method to the list of steps in the pipeline
+        checks the the input identifiers already exist in the pipeline namespace
         checks that the result identifier is unique and marks it as used
+
+        Args:
+            out_id: whether the method binds a result to an identifier
+            in_ids: how many identifiers the method takes as input
         """
         def decorator(method:MethodType):
-            if check_id:
-                # @wraps(method)
-                def wrapper(self:Pipeline, id:str, *args, **kwargs):
-                    self.steps.append((method, (self, id, *args), kwargs))
+            # @wraps(method)
+            def wrapper(self:'Pipeline', *args, **kwargs):
+
+                # append the function to the list of steps in the pipeline
+                self.steps.append((method, (self, *args), kwargs))
+
+                # check that the input identifiers exist in the pipeline namespace
+                for id in args[int(out_id):int(out_id)+in_ids]:
+                    self._assert_id_exists(id)  
+                
+                # check that the result identifier is unique and mark it as used
+                if out_id:
                     self._assert_id_is_unique_and_mark_used(id)
-            else:
-                # @wraps(method)
-                def wrapper(self:Pipeline, *args, **kwargs):
-                    self.steps.append((method, (self, *args), kwargs))
-            
+
             return wrapper
         return decorator
     
@@ -287,14 +297,19 @@ class Pipeline:
                 return tmp_id
 
     
+    def _assert_id_exists(self, identifier:str):
+        """(Compile-time) assert that the given identifier exists in the pipeline namespace"""
+        if identifier not in self.env:
+            raise ValueError(f'Operand identifier "{identifier}" does not exist in pipeline at step {len(self.steps)}: {self.step_i_repr(-1)}')
+    
     def _assert_id_is_unique_and_mark_used(self, identifier:str):
         """
-        Assert that the given identifier is unique, and add it to the compiled_ids set
+        (Compile-time) assert that the given identifier is unique, and add it to the compiled_ids set
         Should be called inside any compile-time functions that will add a variable to the pipeline namespace
         NOTE: always call after appending the step to the pipeline
         """
         if identifier in self.compiled_ids:
-            raise ValueError(f'Tried to reuse identifier "{identifier}" on step {len(self.steps)}: {self.step_repr(-1)}. All identifiers must be unique.')
+            raise ValueError(f'Tried to reuse "{identifier}" for result identifier on step {len(self.steps)}: {self.step_i_repr(-1)}. All identifiers must be unique.')
         self.compiled_ids.add(identifier)
 
     
@@ -317,36 +332,30 @@ class Pipeline:
         return self.env[self.last_set_identifier]
 
 
+    @compile(out_id=False, in_ids=0)
     def set_geo_resolution(self, target:Resolution|str):
         """
-        Append a set_resolution step to the pipeline. 
-        Resolution can either be a fixed Resolution object, or target the resolution of an existing dataset by name.
+        Set the current target geo resolution for the pipeline
+
+        Resolution can either be a fixed Resolution object, e.g. Resolution(0.5, 0.5), 
+        or target the resolution of an existing dataset in the pipeline by name, e.g. 'tasmax'
+
+        NOTE: resolution updates are only applied to results of operations, not on data load.
         """
-        self.steps.append((self._do_set_geo_resolution, (target,)))
+        self.resolution = target
 
 
-    def _do_set_geo_resolution(self, resolution:Resolution|str):
-        """
-        Sets the current target resolution for the pipeline.
-        Regridding is only run during operations on datasets, and only if the dataset is not already at the target resolution.
-        """
-        self.resolution = resolution
-
-
+    @compile(out_id=False, in_ids=0)
     def set_time_resolution(self, target:Frequency|str):
         """
-        Append a set_frequency step to the pipeline.
-        Frequency can either be a fixed Frequency object, or target the frequency of an existing dataset by name.
-        """
-        self.steps.append((self._do_set_time_resolution, (target,)))
+        Set the current target temporal resolution for the pipeline
 
+        Frequency can either be a fixed Frequency object, e.g. Frequency.monthly,
+        or target the frequency of an existing dataset in the pipeline by name, e.g. 'tasmax'
 
-    def _do_set_time_resolution(self, frequency:Frequency|str):
+        NOTE: frequency updates are only applied to results of operations, not on data load.
         """
-        Sets the current target frequency for the pipeline.
-        Temporal interpolation is only run during operations on datasets, and only if the dataset is not already at the target frequency.
-        """
-        self.frequency = frequency
+        self.frequency = target
 
     
     def _assert_pipe_has_resolution(self):
@@ -367,7 +376,7 @@ class Pipeline:
 
     def load(self, identifier:str, data: CMIP6Data|OtherData, model:Model|None=None):
         """Append data load step to the pipeline"""
-        self.steps.append((self._do_load, (identifier, data, model)))
+        self.steps.append((self._do_load, (identifier, data, model), {}))
         self._assert_id_is_unique_and_mark_used(identifier)
 
 
@@ -487,7 +496,7 @@ class Pipeline:
             result = tasmax > 308.15
             ```
         """
-        self.steps.append((self._do_threshold, (out_identifier, in_identifier, threshold)))
+        self.steps.append((self._do_threshold, (out_identifier, in_identifier, threshold), {}))
         self._assert_id_is_unique_and_mark_used(out_identifier)
         
 
@@ -510,7 +519,7 @@ class Pipeline:
 
     def time_regrid(self, out_identifier:str, in_identifier:str, target_frequency:Frequency|str):
         """Append a time regrid step to the pipeline"""
-        self.steps.append((self._do_time_regrid, (out_identifier, in_identifier, target_frequency)))
+        self.steps.append((self._do_time_regrid, (out_identifier, in_identifier, target_frequency), {}))
         self._assert_id_is_unique_and_mark_used(out_identifier)
 
 
@@ -520,7 +529,7 @@ class Pipeline:
 
     def geo_regrid(self, out_identifier:str, in_identifier:str, target_resolution:Resolution|str):
         """Append a geo regrid step to the pipeline"""
-        self.steps.append((self._do_geo_regrid, (out_identifier, in_identifier, target_resolution)))
+        self.steps.append((self._do_geo_regrid, (out_identifier, in_identifier, target_resolution), {}))
         self._assert_id_is_unique_and_mark_used(out_identifier)
     
     
@@ -530,7 +539,7 @@ class Pipeline:
 
     def multiply(self, out_identifier:str, in_identifier1:str, in_identifier2:str):
         """Append a multiply step to the pipeline"""
-        self.steps.append((self._do_multiply, (out_identifier, in_identifier1, in_identifier2)))
+        self.steps.append((self._do_multiply, (out_identifier, in_identifier1, in_identifier2), {}))
         self._assert_id_is_unique_and_mark_used(out_identifier)
 
     
@@ -540,7 +549,7 @@ class Pipeline:
 
     def country_split(self, out_identifier:str, in_identifier:str, countries:list[str]):
         """Append a country split step to the pipeline"""
-        self.steps.append((self._do_country_split, (out_identifier, in_identifier, countries)))
+        self.steps.append((self._do_country_split, (out_identifier, in_identifier, countries), {}))
         self._assert_id_is_unique_and_mark_used(out_identifier)
 
     
@@ -550,7 +559,7 @@ class Pipeline:
 
     def sum(self, out_identifier:str, in_identifier:str, dims:list[str]):
         """Append a sum step to the pipeline"""
-        self.steps.append((self._do_sum, (out_identifier, in_identifier, dims)))
+        self.steps.append((self._do_sum, (out_identifier, in_identifier, dims), {}))
         self._assert_id_is_unique_and_mark_used(out_identifier)
 
 
@@ -560,7 +569,7 @@ class Pipeline:
 
     def save(self, identifier:str, filepath:str):
         """Append a save step to the pipeline"""
-        self.steps.append((self._do_save, (identifier, filepath)))
+        self.steps.append((self._do_save, (identifier, filepath), {}))
 
 
     def _do_save(self, identifier:str, filepath:str):
@@ -571,8 +580,8 @@ class Pipeline:
 
     def execute(self):
         """Execute the pipeline"""
-        for func, args in self.steps:
-            func(*args)
+        for func, args, kwargs in self.steps:
+            func(*args, **kwargs)
 
 
 
