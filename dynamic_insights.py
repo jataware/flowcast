@@ -187,8 +187,8 @@ class Threshold:
 @dataclass
 class Variable:
     data: xr.DataArray
-    Frequency: Frequency|str
-    Resolution: Resolution|str
+    frequency: Frequency|str
+    resolution: Resolution|str
 
 # Operations
 # - load
@@ -211,16 +211,12 @@ class ResultID(str): ...
 class OperandID(str): ...
 
 #TODO:
-# - Variables should only use xarray.DataArray, not xarray.Dataset
+# - can auto_regrid be handled by the decorator? e.g. by looking at OperandIDs
 
 class Pipeline:
 
 
-    def __init__(self, *,
-            realizations: Realization|list[Realization],
-            scenarios: Scenario|list[Scenario],
-            # models: Model|list[Model]
-        ):
+    def __init__(self, *, realizations: Realization|list[Realization], scenarios: Scenario|list[Scenario]):
         
         # static settings for data to be used in pipeline
         self.realizations: list[Realization] = realizations if isinstance(realizations, list) else [realizations]
@@ -229,7 +225,6 @@ class Pipeline:
         assert len(self.realizations) > 0, 'Must specify at least one realization'
         assert len(self.scenarios) > 0, 'Must specify at least one scenario'
 
-        
         # dynamic settings for data to be used in pipeline
         self.resolution: Resolution|str|None = None
         self.frequency: Frequency|str|None = None
@@ -568,17 +563,27 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         """
 
         #first make sure the data matches the specified resolution and frequency
-        if self.resolution is not None and self.env[x].Resolution != self.resolution:
-            tmp_id = self._next_tmp_id()
-            self.geo_regrid.unwrapped(tmp_id, x, self.resolution)
-            x = tmp_id
-        if self.frequency is not None and self.env[x].Frequency != self.frequency:
-            tmp_id = self._next_tmp_id()
-            self.time_regrid.unwrapped(tmp_id, x, self.frequency)
-            x = tmp_id
+        x = self.auto_regrid(x, allow_no_target=True)
         
-        pdb.set_trace()
-        ...
+        # perform the threshold operation
+        var = self.get_value(x)
+        match threshold.type:
+            case ThresholdType.greater_than:
+                result = var.data > threshold.value
+            case ThresholdType.less_than:
+                result = var.data < threshold.value
+            case ThresholdType.greater_than_or_equal_to:
+                result = var.data >= threshold.value
+            case ThresholdType.less_than_or_equal_to:
+                result = var.data <= threshold.value
+            case ThresholdType.equal_to:
+                result = var.data == threshold.value
+            case ThresholdType.not_equal_to:
+                result = var.data != threshold.value
+
+        # save the result to the pipeline namespace
+        self.bind_value(y, Variable(result, var.frequency, var.resolution))
+
 
 
     @compile
@@ -610,6 +615,37 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         """
         raise NotImplementedError()
 
+    def auto_regrid(self, x:OperandID, allow_no_target:bool=False) -> OperandID:
+        """
+        automatically regrid the given data to the target geo and temporal resolution of the pipeline
+
+        Args:
+            x (str): the identifier of the data to regrid
+            allow_no_target (bool, optional): whether the pipeline may skip target geo/temporal resolutions. Defaults to False.
+
+        Returns:
+            str: the identifier of the regridded data
+        """
+
+        # check if geo/time targets are necessary
+        if not allow_no_target:
+            assert self.resolution is not None, f'Pipeline must have a target geo resolution before performing regrid operation on "{x}"'
+            assert self.frequency is not None, f'Pipeline must have a target temporal resolution before performing regrid operation on "{x}"'
+
+        # perform the geo regrid
+        if self.resolution is not None and self.env[x].resolution != self.resolution:
+            tmp_id = self._next_tmp_id()
+            self.geo_regrid.unwrapped(tmp_id, x, self.resolution)
+            x = tmp_id
+
+        # perform the time regrid
+        if self.frequency is not None and self.env[x].frequency != self.frequency:
+            tmp_id = self._next_tmp_id()
+            self.time_regrid.unwrapped(tmp_id, x, self.frequency)
+            x = tmp_id
+
+        return x
+    
 
     @compile
     def multiply(self, y:ResultID, x1:OperandID, x2:OperandID):
@@ -621,7 +657,18 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
             x1 (str): the identifier of the left operand
             x2 (str): the identifier of the right operand
         """
-        raise NotImplementedError()
+
+        #ensure data matches the specified resolution and frequency
+        x1 = self.auto_regrid(x1)
+        x2 = self.auto_regrid(x2)
+
+        # perform the multiplication
+        var1 = self.get_value(x1)
+        var2 = self.get_value(x2)
+        result = var1.data * var2.data
+
+        # save the result to the pipeline namespace
+        self.bind_value(y, Variable(result, var1.frequency, var1.resolution))
     
 
     @compile
@@ -649,6 +696,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         """
         raise NotImplementedError()
 
+
     @compile
     def save(self, x:OperandID, path:str):
         """
@@ -666,8 +714,6 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         """Execute the pipeline"""
         for func, args, kwargs in self.steps:
             func(*args, **kwargs)
-
-
 
 
 
@@ -719,18 +765,17 @@ def heat_scenario():
 
 
 def crop_scenario():
-    raise NotImplementedError()
-
     pipe = Pipeline(
         realizations=Realization.r1i1p1f1,
-        scenarios=[Scenario.ssp126, Scenario.ssp245, Scenario.ssp370,Scenario.ssp585],
+        scenarios=[Scenario.ssp126, Scenario.ssp245, Scenario.ssp370, Scenario.ssp585],
     )
-    pipe.set_resolution(Resolution(0.5, 0.5))
-    pipe.set_frequency(Frequency.monthly)
+    pipe.set_geo_resolution(Resolution(0.5, 0.5))
+    pipe.set_time_resolution(Frequency.monthly)
     pipe.load('tas', CMIP6Data.tas, Model.FGOALS_f3_L)
     pipe.load('pr', CMIP6Data.pr, Model.FGOALS_f3_L)
+    pipe.load('land_use', OtherData.land_use)
 
-
+    #TODO: rest of scenario
 
 
 if __name__ == '__main__':
