@@ -107,9 +107,9 @@ from rioxarray.exceptions import NoDataInBounds
 from regrid import Resolution
 
 
+import re
 from itertools import count
-from functools import wraps
-from inspect import signature
+from inspect import signature, getsource, Signature
 from enum import Enum, auto
 from typing import Any
 from types import MethodType
@@ -123,11 +123,16 @@ from rich import print, traceback; traceback.install(show_locals=True)
 import pdb
 
 
-"""
-TASKS:
-- have ssp be a dimension in xarray data
-- 
-"""
+
+def get_signature_from_source(method):
+    source = getsource(method)
+    match = re.search(r'def\s+\w+\((.*?)\):', source, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    else:
+        raise ValueError("Couldn't extract function signature from source")
+
+
 
 
 
@@ -244,6 +249,13 @@ class Pipeline:
         # tmp id counter
         self.tmp_id_counter = count(0)
 
+        # bind the current instance to all unwrapped compiled methods (so we don't need to pass the instance manually)
+        for attr_name, attr_value in vars(Pipeline).items():
+            if hasattr(attr_value, "unwrapped"):
+                bound_unwrapped = attr_value.unwrapped.__get__(self, Pipeline)
+                setattr(attr_value, "unwrapped", bound_unwrapped)
+
+
 
     def compile(method:MethodType):
         """
@@ -273,7 +285,12 @@ class Pipeline:
         #TODO: perhaps we don't need this restriction
         assert len(result_idx) <= 1, f'ERROR compiling "Pipeline.{method.__name__}". Compiled functions can only have one result identifier'
 
-        # @wraps(method)
+
+        # Check the return annotation
+        if sig.return_annotation not in {None, Signature.empty}:
+            raise ValueError(f'Method "{method.__name__}" should not have a return annotation or it should be set to None.')
+
+
         def wrapper(self:'Pipeline', *args, **kwargs):
 
             # append the function to the list of steps in the pipeline
@@ -289,9 +306,30 @@ class Pipeline:
 
         # save the unmodified original function in for use inside pipeline methods
         wrapper.unwrapped = method
-        
-        return wrapper
-        
+
+
+        # hacky way to set the wrapper to have the same signature as the original function (for intellisense)
+        formatted_sig_args = get_signature_from_source(method)
+        formatted_call_args = ', '.join([p.name for p in params])
+        wrapper_src = f"""
+def intellisense_wrapper({formatted_sig_args}):
+    return wrapper({formatted_call_args})
+intellisense_wrapper.unwrapped = wrapper.unwrapped
+"""
+
+        # Set the namespace for eval
+        namespace = {
+            'wrapper': wrapper,
+            'Pipeline': 'Pipeline',
+            **globals(),
+        }
+
+        # Execute the source code to create the intellisense friendly wrapper
+        exec(wrapper_src, namespace)
+        intellisense_wrapper = namespace['intellisense_wrapper']
+
+        return intellisense_wrapper
+
     
     @staticmethod
     def step_repr(step:tuple[MethodType, tuple[Any, ...], dict[str, Any]]):
