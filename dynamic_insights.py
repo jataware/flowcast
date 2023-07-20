@@ -260,7 +260,7 @@ class Pipeline:
         checks the the input identifiers already exist in the pipeline namespace
         checks that the result identifier is unique and marks it as used
 
-        NOTE: All identifiers in compiled functions must use either the ResultID or OperandID type
+        NOTE: All identifiers in compiled functions must use either the `ResultID` or `OperandID` type
         identifiers that are not correctly marked will not be properly checked during compilation
         Also all identifiers must be positional arguments, not keyword arguments
         """
@@ -272,8 +272,10 @@ class Pipeline:
         operand_idx = []
         for i, param in enumerate(params[1:]): #skip self
             if param.annotation == ResultID:
+                assert param.kind == param.POSITIONAL_ONLY, f'ERROR compiling "Pipeline.{method.__name__}". Identifier "{param.name}:{param.annotation}" must be a positional-only argument'
                 result_idx.append(i)
             elif param.annotation == OperandID:
+                assert param.kind == param.POSITIONAL_ONLY, f'ERROR compiling "Pipeline.{method.__name__}". Identifier "{param.name}:{param.annotation}" must be a positional-only argument'
                 operand_idx.append(i)
 
 
@@ -438,7 +440,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
 
     
     @compile
-    def load(self, name:ResultID, data:CMIP6Data|OtherData, model:Model|None=None):
+    def load(self, name:ResultID, /, data:CMIP6Data|OtherData, model:Model|None=None):
         """
         Load existing data into the pipeline
 
@@ -557,7 +559,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
 
 
     @compile
-    def threshold(self, y:ResultID, x:OperandID, threshold:Threshold):
+    def threshold(self, y:ResultID, x:OperandID, /, threshold:Threshold):
         """
         Threshold a dataset, e.g. `y = x > threshold` or `y = x <= threshold`
         """
@@ -587,7 +589,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
 
 
     @compile
-    def time_regrid(self, y:ResultID, x:OperandID, target:Frequency|str):
+    def time_regrid(self, y:ResultID, x:OperandID, /, target:Frequency|str):
         """
         regrid the given data to the given temporal frequency
         
@@ -602,7 +604,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
     
 
     @compile
-    def geo_regrid(self, y:ResultID, x:OperandID, target:Resolution|str):
+    def geo_regrid(self, y:ResultID, x:OperandID, /, target:Resolution|str):
         """
         regrid the given data to the given geo resolution
 
@@ -648,7 +650,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
     
 
     @compile
-    def multiply(self, y:ResultID, x1:OperandID, x2:OperandID):
+    def multiply(self, y:ResultID, x1:OperandID, x2:OperandID, /):
         """
         Multiply two datasets together, i.e. `y = x1 * x2`
 
@@ -672,7 +674,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
     
 
     @compile
-    def country_split(self, y:ResultID, x:OperandID, countries:list[str]):
+    def country_split(self, y:ResultID, x:OperandID, /, countries:list[str]):
         """
         Adds a new 'country' dimension to the data, and separates splits out the data at each given country
 
@@ -685,7 +687,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
     
 
     @compile
-    def sum(self, y:ResultID, x:OperandID, dims:list[str]):
+    def sum(self, y:ResultID, x:OperandID, /, dims:list[str]):
         """
         Sum the data along the given dimensions
 
@@ -698,7 +700,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
 
 
     @compile
-    def save(self, x:OperandID, path:str):
+    def save(self, x:OperandID, /, path:str):
         """
         Save the data to the given path
 
