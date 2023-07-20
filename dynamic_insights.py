@@ -249,7 +249,7 @@ class Pipeline:
         """
         Decorator to make a method a compile-time method.
 
-        Adds the method to the list of steps in the pipeline
+        Adds the method to the list of steps in the pipeline (instead of running it)
         checks the the input identifiers already exist in the pipeline namespace
         checks that the result identifier is unique and marks it as used
 
@@ -343,14 +343,14 @@ class Pipeline:
 
     
     
-    def bind_value(self, identifier:str, value: Variable):
+    def bind_value(self, identifier:ResultID, value:Variable):
         """Bind a value to an identifier in the pipeline namespace"""
         assert identifier not in self.env, f'Identifier "{identifier}" already exists in pipeline namespace. All identifiers must be unique.'
         self.last_set_identifier = identifier
         self.env[identifier] = value
 
 
-    def get_value(self, identifier:str) -> Variable:
+    def get_value(self, identifier:OperandID) -> Variable:
         """Get a value from the pipeline namespace"""
         return self.env[identifier]
     
@@ -394,9 +394,9 @@ class Pipeline:
         """
         time_res, geo_res = False, False
         for func, _ in self.steps:
-            if func == self._do_set_time_resolution:
+            if func == self.set_time_resolution:
                 time_res = True
-            elif func == self._do_set_geo_resolution:
+            elif func == self.set_geo_resolution:
                 geo_res = True
         if not time_res:
             raise ValueError('Pipeline must have a target temporal resolution before performing binary operations')
@@ -420,7 +420,7 @@ class Pipeline:
             case OtherData.population:
                 var = self.get_population_data(self.scenarios)
             case OtherData.land_use:
-                raise NotImplementedError()
+                var = self.get_land_use_data()
             case CMIP6Data():
                 assert model is not None, 'Must specify a model for CMIP6 data'
                 var = self.load_cmip6_data(data, model)
@@ -515,6 +515,11 @@ class Pipeline:
         return dataset
 
 
+    @staticmethod
+    def get_land_use_data() -> xr.Dataset:
+        raise NotImplementedError()
+
+
     #TODO: other models' data loaders as needed
 
 
@@ -536,6 +541,7 @@ class Pipeline:
         
         pdb.set_trace()
         ...
+
 
     @compile
     def time_regrid(self, y:ResultID, x:OperandID, target:Frequency|str):
