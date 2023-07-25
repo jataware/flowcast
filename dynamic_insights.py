@@ -183,12 +183,43 @@ class Threshold:
     value: float
     type: ThresholdType
 
+class GeoRegridType(Enum):
+    xr_interp = auto()
+    cdo_sum = auto()
+    cdo_max = auto()
+    cdo_mean = auto()
+    cdo_nearest = auto()
+    #TODO: other geo regrid types as needed
+    #TODO: pull these from elwood
+
+class TimeRegridType(Enum):
+    xr_interp = auto()
+    xr_nearest = auto()
+    #TODO: other temporal regrid types as needed
+    #TODO: pull these from elwood
+
+
+regrid_map:dict[CMIP6Data|OtherData, tuple[GeoRegridType,TimeRegridType]] = {
+    CMIP6Data.tasmax: (GeoRegridType.xr_interp, TimeRegridType.xr_interp),
+    # CMIP6Data.tas: (GeoRegridType.cdo_mean, TimeRegridType.xr_interp),
+    # CMIP6Data.pr: (GeoRegridType.cdo_sum, TimeRegridType.xr_interp),
+    OtherData.population: (GeoRegridType.cdo_sum, TimeRegridType.xr_interp),
+    # OtherData.land_use: (GeoRegridType.cdo_nearest, TimeRegridType.xr_nearest),
+    #TODO: other variables as needed
+}
 
 @dataclass
 class Variable:
     data: xr.DataArray
     frequency: Frequency|str
     resolution: Resolution|str
+    time_regrid_type: TimeRegridType
+    geo_regrid_type: GeoRegridType
+
+    @staticmethod
+    def from_result(data:xr.DataArray, prev:'Variable') -> 'Variable':
+        """Create a new Variable from the given data, inheriting the geo/temporal resolution from a previous Variable"""
+        return Variable(data, prev.frequency, prev.resolution, prev.time_regrid_type, prev.geo_regrid_type)
 
 # Operations
 # - load
@@ -211,7 +242,9 @@ class ResultID(str): ...
 class OperandID(str): ...
 
 #TODO:
+# - all data loading methods should return xr.DataArray, not xr.Dataset
 # - can auto_regrid be handled by the decorator? e.g. by looking at OperandIDs
+
 
 class Pipeline:
 
@@ -462,9 +495,11 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
             case _:
                 raise ValueError(f'Unrecognized data type: {data}. Expected one of: {CMIP6Data}, {OtherData}')
 
-        # extract dataarray from dataset, and wrap in a Variable. 
-        # set geo/time resolution to itself
-        var = Variable(var[data.value], name, name)
+        # grab the corresponding geo/temporal regrid types for this data
+        geo_regrid_type, time_regrid_type = regrid_map[data]
+
+        # extract dataarray from dataset, and wrap in a Variable (indicating current geo/time resolution is itself)
+        var = Variable(var[data.value], name, name, time_regrid_type, geo_regrid_type)
 
         # save the variable to the pipeline namespace under the given identifier
         self.bind_value(name, var)
@@ -584,37 +619,62 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
                 result = var.data != threshold.value
 
         # save the result to the pipeline namespace
-        self.bind_value(y, Variable(result, var.frequency, var.resolution))
+        self.bind_value(y, Variable.from_result(result, var))
 
 
 
     @compile
-    def time_regrid(self, y:ResultID, x:OperandID, /, target:Frequency|str):
+    def fixed_time_regrid(self, y:ResultID, x:OperandID, /, target:Frequency):
         """
-        regrid the given data to the given temporal frequency
+        regrid the given data to the given fixed temporal frequency
         
         Args:
             y (str): the identifier to bind the result to in the pipeline namespace
             x (str): the identifier of the data to regrid
-            target (Frequency|str): the target temporal frequency to regrid to.
-                Can either be a fixed Frequency object, e.g. Frequency.monthly,
-                or target the frequency of an existing dataset in the pipeline by name, e.g. 'tasmax'
+            target (Frequency): the fixed target temporal frequency to regrid to, e.g. Frequency.monthly
         """
         raise NotImplementedError()
     
+    @compile
+    def matched_time_regrid(self, y:ResultID, x:OperandID, /, target:str):
+        """
+        regrid the given data to match the temporal frequency of the specified target data
+        
+        Args:
+            y (str): the identifier to bind the result to in the pipeline namespace
+            x (str): the identifier of the data to regrid
+            target (str): the identifier for the target data to match temporal frequency with while regridding
+                should target the resolution of an existing dataset in the pipeline by name, e.g. 'tasmax'
+        """
+        raise NotImplementedError()
 
     @compile
-    def geo_regrid(self, y:ResultID, x:OperandID, /, target:Resolution|str):
+    def fixed_geo_regrid(self, y:ResultID, x:OperandID, /, target:Resolution):
         """
-        regrid the given data to the given geo resolution
+        regrid the given data to the given fixed geo resolution
 
         Args:
             result (str): the identifier to bind the result to in the pipeline namespace
             x (str): the identifier of the data to regrid
-            target (Resolution|str): the target geo resolution to regrid to.
-                Can either be a fixed Resolution object, e.g. Resolution(0.5, 0.5),
-                or target the resolution of an existing dataset in the pipeline by name, e.g. 'tasmax'
+            target (Resolution): the fixed target geo resolution to regrid to, e.g. Resolution(0.5, 0.5),
         """
+        raise NotImplementedError()
+    
+    @compile
+    def matched_geo_regrid(self, y:ResultID, x:OperandID, /, target:str):
+        """
+        regrid the given data to match the geo resolution of the specified target data
+
+        Args:
+            result (str): the identifier to bind the result to in the pipeline namespace
+            x (str): the identifier of the data to regrid
+            target (str): the identifier for the target data to match geo resolution while regridding
+                should target the resolution of an existing dataset in the pipeline by name, e.g. 'tasmax'
+        """
+        var = self.get_value(x)
+        target_var = self.get_value(target)
+
+        pdb.set_trace()
         raise NotImplementedError()
 
     def auto_regrid(self, x:OperandID, allow_no_target:bool=False) -> OperandID:
@@ -637,7 +697,10 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         # perform the geo regrid
         if self.resolution is not None and self.env[x].resolution != self.resolution:
             tmp_id = self._next_tmp_id()
-            self.geo_regrid.unwrapped(tmp_id, x, self.resolution)
+            if isinstance(self.resolution, Resolution):
+                self.fixed_geo_regrid.unwrapped(tmp_id, x, self.resolution)
+            else:
+                self.matched_geo_regrid.unwrapped(tmp_id, x, self.resolution)
             x = tmp_id
 
         # perform the time regrid
@@ -670,7 +733,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         result = var1.data * var2.data
 
         # save the result to the pipeline namespace
-        self.bind_value(y, Variable(result, var1.frequency, var1.resolution))
+        self.bind_value(y, Variable.from_result(result, var1))
     
 
     @compile
@@ -741,7 +804,7 @@ def heat_scenario():
     # pipe.set_time_resolution(Frequency.monthly)
 
     # e.g. target geo/temporal resolution of existing data in pipeline
-    pipe.set_geo_resolution('tasmax')
+    pipe.set_geo_resolution('pop')
     pipe.set_time_resolution('tasmax')
 
     # load the data
