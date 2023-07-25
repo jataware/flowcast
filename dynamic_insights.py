@@ -199,6 +199,7 @@ class TimeRegridType(Enum):
     #TODO: pull these from elwood
 
 
+## For every type of data, indicate what type of regridding operation is appropriate
 regrid_map:dict[CMIP6Data|OtherData, tuple[GeoRegridType,TimeRegridType]] = {
     CMIP6Data.tasmax: (GeoRegridType.xr_interp, TimeRegridType.xr_interp),
     # CMIP6Data.tas: (GeoRegridType.cdo_mean, TimeRegridType.xr_interp),
@@ -238,6 +239,8 @@ class Variable:
 # - interpolate
 # - split
 
+
+# Datatypes for representing identifiers in the pipeline namespace
 class ResultID(str): ...
 class OperandID(str): ...
 
