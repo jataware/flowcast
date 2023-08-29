@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 [CMIP6 generalization tasks]
 1. ability to dynamically construct the data pipeline for a scenario
@@ -100,12 +101,21 @@ from matplotlib import pyplot as plt
 import numpy as np
 import pandas as pd
 import xarray as xr
-import rioxarray as rxr # needs to be imported?
-from rioxarray.exceptions import NoDataInBounds
+
+# import rioxarray as rxr # needs to be imported?
+# from rioxarray.exceptions import NoDataInBounds
 
 #TODO: pull this from elwood when it works
-from regrid import Resolution
+# from regrid import Resolution
+from dataclasses import dataclass
+@dataclass
+class Resolution:
+    dx: float
+    dy: float = None
 
+    def __init__(self, dx: float, dy: float|None=None):
+        self.dx = dx
+        self.dy = dy if dy is not None else dx
 
 import re
 from itertools import count
@@ -487,16 +497,16 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         """
 
         # use specific data loader depending on the requested data
-        match data:
-            case OtherData.population:
-                var = self.get_population_data(self.scenarios)
-            case OtherData.land_use:
-                var = self.get_land_use_data()
-            case CMIP6Data():
-                assert model is not None, 'Must specify a model for CMIP6 data'
-                var = self.load_cmip6_data(data, model)
-            case _:
-                raise ValueError(f'Unrecognized data type: {data}. Expected one of: {CMIP6Data}, {OtherData}')
+        
+        if data == OtherData.population:
+            var = self.get_population_data(self.scenarios)
+        elif data == OtherData.land_use:
+            var = self.get_land_use_data()
+        elif isinstance(data, CMIP6Data):
+            assert model is not None, 'Must specify a model for CMIP6 data'
+            var = self.load_cmip6_data(data, model)
+        else:
+            raise ValueError(f'Unrecognized data type: {data}. Expected one of: {CMIP6Data}, {OtherData}')
 
         # grab the corresponding geo/temporal regrid types for this data
         geo_regrid_type, time_regrid_type = regrid_map[data]
@@ -516,17 +526,16 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
             all_scenarios: list[xr.Dataset] = []
             for scenario in self.scenarios:
         
-                match model:
-                    case Model.CAS_ESM2_0:
-                        data = self.CAS_ESM2_0_cmip_loader(variable, realization, scenario)
-                    
-                    case Model.FGOALS_f3_L:
-                        data = self.FGOALS_f3_L_cmip_loader(variable, realization, scenario)
-
-                    #TODO: other models as needed
-                    case _:
-                        raise ValueError(f'Unrecognized model: {model}. Expected one of: {[*Model.__members__.values()]}')
+                if model == Model.CAS_ESM2_0:
+                    data = self.CAS_ESM2_0_cmip_loader(variable, realization, scenario)
                 
+                elif model == Model.FGOALS_f3_L:
+                    data = self.FGOALS_f3_L_cmip_loader(variable, realization, scenario)
+
+                #TODO: other models as needed
+                else:
+                    raise ValueError(f'Unrecognized model: {model}. Expected one of: {[*Model.__members__.values()]}')
+            
                 # add a scenario coordinate
                 data = data.assign_coords(
                     ssp=('ssp', np.array([scenario.value], dtype='object'))
@@ -607,19 +616,21 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         
         # perform the threshold operation
         var = self.get_value(x)
-        match threshold.type:
-            case ThresholdType.greater_than:
-                result = var.data > threshold.value
-            case ThresholdType.less_than:
-                result = var.data < threshold.value
-            case ThresholdType.greater_than_or_equal_to:
-                result = var.data >= threshold.value
-            case ThresholdType.less_than_or_equal_to:
-                result = var.data <= threshold.value
-            case ThresholdType.equal_to:
-                result = var.data == threshold.value
-            case ThresholdType.not_equal_to:
-                result = var.data != threshold.value
+        
+        if threshold.type == ThresholdType.greater_than:
+            result = var.data > threshold.value
+        elif threshold.type == ThresholdType.less_than:
+            result = var.data < threshold.value
+        elif threshold.type == ThresholdType.greater_than_or_equal_to:
+            result = var.data >= threshold.value
+        elif threshold.type == ThresholdType.less_than_or_equal_to:
+            result = var.data <= threshold.value
+        elif threshold.type == ThresholdType.equal_to:
+            result = var.data == threshold.value
+        elif threshold.type == ThresholdType.not_equal_to:
+            result = var.data != threshold.value
+        else:
+            raise ValueError(f'Unrecognized threshold type: {threshold.type}. Expected one of: {[*ThresholdType.__members__.values()]}')
 
         # save the result to the pipeline namespace
         self.bind_value(y, Variable.from_result(result, var))
