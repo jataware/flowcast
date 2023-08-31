@@ -106,6 +106,7 @@ import xarray as xr
 # from rioxarray.exceptions import NoDataInBounds
 
 #TODO: pull this from elwood when it works
+from elwood.elwood import regrid_dataframe
 # from regrid import Resolution
 from dataclasses import dataclass
 @dataclass
@@ -133,7 +134,7 @@ from rich import print, traceback; traceback.install(show_locals=True)
 import pdb
 
 
-
+# needed for intellisense to correctly work on @compile decorated methods
 def get_signature_from_source(method):
     source = getsource(method)
     match = re.search(r'def\s+\w+\((.*?)\):', source, re.DOTALL)
@@ -143,7 +144,62 @@ def get_signature_from_source(method):
         raise ValueError("Couldn't extract function signature from source")
 
 
+class LongitudeConvention(Enum):
+    ambiguous = auto()
+    neg180_180 = auto()
+    pos0_360 = auto()
 
+def validate_longitudes(lons:np.ndarray):
+    """Validate that the given longitude values are in the range [-180, 360] and are monotonic (either positive or negative)"""
+    assert np.all(lons >= -180) and np.all(lons <= 360), f'Longitude values must be in the range [-180, 360]. Got: {lons}'
+    deltas = np.diff(lons)
+    assert np.all(deltas >= 0) or np.all(deltas <= 0), f'Longitude values must be monotonic (either positive or negative). Got: {lons}'
+
+
+def validate_latitudes(lats:np.ndarray):
+    """Validate that the given latitude values are in the range [-90, 90], and are monotonic (either positive or negative)"""
+    assert np.all(lats >= -90) and np.all(lats <= 90), f'Latitude values must be in the range [-90, 90]. Got: {lats}'
+    deltas = np.diff(lats)
+    assert np.all(deltas >= 0) or np.all(deltas <= 0), f'Latitude values must be monotonic (either positive or negative). Got: {lats}'
+
+def determine_longitude_convention(lons:np.ndarray) -> LongitudeConvention:
+    """Determine the longitude convention of the given longitude values"""
+
+    # ensure valid longitude values
+    validate_longitudes(lons)
+    
+    # determine the longitude convention
+    if np.all(lons >= 0) and np.all(lons <= 180):
+        return LongitudeConvention.ambiguous
+    elif np.all(lons >= -180) and np.all(lons <= 180):
+        return LongitudeConvention.neg180_180
+    elif np.all(lons >= 0) and np.all(lons <= 360):
+        return LongitudeConvention.pos0_360
+    
+    raise ValueError(f'Internal Error: Should be unreachable. Got: {lons}')
+    
+def convert_longitude_convention(lons:np.ndarray, target_convention:LongitudeConvention) -> np.ndarray:
+    """Convert the given longitude values to the specified longitude convention"""
+
+    assert np.all(lons >= -180) and np.all(lons <= 360), f'Longitude values must be in the range [-180, 360]. Got: {lons}'
+    
+    if target_convention == LongitudeConvention.ambiguous:
+        target_convention = LongitudeConvention.neg180_180
+
+    if target_convention == LongitudeConvention.neg180_180:
+        return np.where(lons > 180, lons - 360, lons)
+    elif target_convention == LongitudeConvention.pos0_360:
+        return np.where(lons < 0, lons + 360, lons)
+    else:
+        raise ValueError(f'Invalid target longitude convention: {target_convention}. Expected one of: {[*LongitudeConvention.__members__.values()]}')
+
+
+def create_lat_bins(lats:np.ndarray, include_left:bool=True, include_right:bool=True) -> np.ndarray:
+    ...
+
+def create_lon_bins(lons:np.ndarray, include_left:bool=True, include_right:bool=True) -> np.ndarray:
+    ...
+    
 
 
 class Scenario(str, Enum):
@@ -194,27 +250,36 @@ class Threshold:
     type: ThresholdType
 
 class GeoRegridType(Enum):
-    xr_interp = auto()
-    cdo_sum = auto()
-    cdo_max = auto()
-    cdo_mean = auto()
-    cdo_nearest = auto()
+    sum = auto()
+    # mean = auto()
+    interp = auto()
+    min = auto()
+    max = auto()
+    nearest = auto()
+    # xr_interp = auto()
+    # cdo_sum = auto()
+    # cdo_max = auto()
+    # cdo_mean = auto()
+    # cdo_nearest = auto()
     #TODO: other geo regrid types as needed
     #TODO: pull these from elwood
 
 class TimeRegridType(Enum):
-    xr_interp = auto()
-    xr_nearest = auto()
+    # mean = auto()
+    interp = auto()
+    nearest = auto()
+    # xr_interp = auto()
+    # xr_nearest = auto()
     #TODO: other temporal regrid types as needed
     #TODO: pull these from elwood
 
 
 ## For every type of data, indicate what type of regridding operation is appropriate
 regrid_map:dict[CMIP6Data|OtherData, tuple[GeoRegridType,TimeRegridType]] = {
-    CMIP6Data.tasmax: (GeoRegridType.xr_interp, TimeRegridType.xr_interp),
+    CMIP6Data.tasmax: (GeoRegridType.interp, TimeRegridType.interp),
     # CMIP6Data.tas: (GeoRegridType.cdo_mean, TimeRegridType.xr_interp),
     # CMIP6Data.pr: (GeoRegridType.cdo_sum, TimeRegridType.xr_interp),
-    OtherData.population: (GeoRegridType.cdo_sum, TimeRegridType.xr_interp),
+    OtherData.population: (GeoRegridType.sum, TimeRegridType.interp),
     # OtherData.land_use: (GeoRegridType.cdo_nearest, TimeRegridType.xr_nearest),
     #TODO: other variables as needed
 }
@@ -594,6 +659,10 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         # combine all the data into one xarray with ssp as a dimension
         dataset = xr.concat(all_scenarios, dim='ssp')
 
+        #DEBUG crop to a smaller area
+        # cropped_dataset = dataset.sel(lat=slice(30, -10, 1), lon=slice(-10, 30))
+        # return cropped_dataset
+
         return dataset
 
 
@@ -688,8 +757,89 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         var = self.get_value(x)
         target_var = self.get_value(target)
 
-        pdb.set_trace()
-        raise NotImplementedError()
+        #TODO: need to handle interpolation/other cases
+
+        # TODO: this is maybe a bit restrictive. perhaps we could just deal with when the coordinates are not in the same order
+        assert var.data.dims[-2:] == ('lat', 'lon'), f'Variable "{x}" must have final dimensions (lat, lon) to be regridded'
+        assert target_var.data.dims[-2:] == ('lat', 'lon'), f'Variable "{target}" must have final dimensions (lat, lon) to be used as a regrid target'
+
+        # pull out all the values we need
+        old_lats: np.ndarray = var.data.lat.data
+        old_lons: np.ndarray = var.data.lon.data
+        new_lats: np.ndarray = target_var.data.lat.data
+        new_lons: np.ndarray = target_var.data.lon.data
+        data: np.ndarray = var.data.data
+        method = 'mean' #TODO: pull this from the geo_regrid_type
+
+        # validate latitudes
+        validate_latitudes(old_lats)
+        validate_latitudes(new_lats)
+
+
+        # pdb.set_trace()
+        # new_data = regrid_dataframe(data, {'lat_column': 'lat', 'lon_column':'lon'}, ['time'], 0.5,)
+
+
+
+        # ensure old_longitude convention ([-180,180] vs [0,360]) matches new_longitude. This also validates longitudes
+        old_lon_convention = determine_longitude_convention(old_lons)
+        new_lon_convention = determine_longitude_convention(new_lons)
+        if old_lon_convention != new_lon_convention:
+            old_lons = convert_longitude_convention(old_lons, new_lon_convention)
+
+        # create bin boundaries for the new latitudes and longitudes
+        #TODO: break out bin creation into functions
+        #TODO: bin creation needs to consider current lat/lon values. e.g. tasmax lon values are already binned, just need to add 360 as upper bound
+        # new_lat_bins = create_lat_bins(new_lats)
+        # new_lon_bins = create_lon_bins(new_lons)
+        
+        new_lat_delta = new_lats[1] - new_lats[0]
+        new_lat_bins = np.concatenate((new_lats, [new_lats[-1] + new_lat_delta])) - new_lat_delta/2
+        new_lon_delta = new_lons[1] - new_lons[0]
+        new_lon_bins = np.concatenate((new_lons, [new_lons[-1] + new_lon_delta])) - new_lon_delta/2
+
+        # add small epsilon to first and last elements to ensure that the bounds are inclusive
+        new_lat_bins[0] += -np.sign(new_lat_delta) * 1e-10
+        new_lat_bins[-1] += np.sign(new_lat_delta) * 1e-10
+        new_lon_bins[0] += -np.sign(new_lon_delta) * 1e-10
+        new_lon_bins[-1] += np.sign(new_lon_delta) * 1e-10
+
+        # Find the corresponding bins for latitudes and longitudes
+        lat_idx = np.digitize(old_lats, new_lat_bins) - 1
+        lon_idx = np.digitize(old_lons, new_lon_bins) - 1
+
+        #crop the data so that anything outside the new lat/lon bounds is discarded
+        lat_idx_mask = (lat_idx >= 0) & (lat_idx < len(new_lats))
+        lon_idx_mask = (lon_idx >= 0) & (lon_idx < len(new_lons))
+        lat_idx = lat_idx[lat_idx_mask]
+        lon_idx = lon_idx[lon_idx_mask]
+        data = data[..., lat_idx_mask, :][..., lon_idx_mask]
+
+        # Initialize the new data grid
+        new_data = np.zeros(data.shape[:-2] + (len(new_lats), len(new_lons)), dtype=data.dtype)
+
+        # Accumulate over the binned indices, leaving non-geo dimensions alone
+        idx = [np.arange(s) for s in data.shape[:-2]] + [lat_idx, lon_idx]
+        mesh = np.meshgrid(*idx, indexing='ij')
+        np.add.at(new_data, tuple(mesh), data)
+
+        
+        # convert new_data into an xarray
+        new_data = xr.DataArray(
+            new_data,
+            dims=var.data.dims,
+            coords={
+                **var.data.coords,
+                'lat': new_lats,
+                'lon': new_lons,
+            }
+        )
+
+        # save the result to the pipeline namespace
+        var = Variable.from_result(new_data, var)
+        var.resolution = target_var.resolution
+        self.bind_value(y, var)
+ 
 
     def auto_regrid(self, x:OperandID, allow_no_target:bool=False) -> OperandID:
         """
@@ -708,6 +858,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
             assert self.resolution is not None, f'Pipeline must have a target geo resolution before performing regrid operation on "{x}"'
             assert self.frequency is not None, f'Pipeline must have a target temporal resolution before performing regrid operation on "{x}"'
 
+        #TODO: need to do regridding operations that reduce size of data before ones that increase it
         # perform the geo regrid
         if self.resolution is not None and self.env[x].resolution != self.resolution:
             tmp_id = self._next_tmp_id()
@@ -720,7 +871,10 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         # perform the time regrid
         if self.frequency is not None and self.env[x].frequency != self.frequency:
             tmp_id = self._next_tmp_id()
-            self.time_regrid.unwrapped(tmp_id, x, self.frequency)
+            if isinstance(self.frequency, Frequency):
+                self.fixed_time_regrid.unwrapped(tmp_id, x, self.frequency)
+            else:
+                self.matched_time_regrid.unwrapped(tmp_id, x, self.frequency)
             x = tmp_id
 
         return x
@@ -818,7 +972,8 @@ def heat_scenario():
     # pipe.set_time_resolution(Frequency.monthly)
 
     # e.g. target geo/temporal resolution of existing data in pipeline
-    pipe.set_geo_resolution('pop')
+    # pipe.set_geo_resolution('pop')
+    pipe.set_geo_resolution('tasmax')
     pipe.set_time_resolution('tasmax')
 
     # load the data
