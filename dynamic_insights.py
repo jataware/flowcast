@@ -817,13 +817,21 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
 
         # Initialize the new data grid
         new_data = np.zeros(data.shape[:-2] + (len(new_lats), len(new_lons)), dtype=data.dtype)
+        nan_accumulation = np.zeros(data.shape[:-2] + (len(new_lats), len(new_lons)), dtype=bool)
+
+        #set any data that is nan to 0, and keep track of where the nans were
+        validmask = ~np.isnan(data)
+        data[~validmask] = 0
 
         # Accumulate over the binned indices, leaving non-geo dimensions alone
         idx = [np.arange(s) for s in data.shape[:-2]] + [lat_idx, lon_idx]
         mesh = np.meshgrid(*idx, indexing='ij')
         np.add.at(new_data, tuple(mesh), data)
 
-        
+        # Accumulate number of valid values per new cell    . anywhere that didn't have any valid values should be nan
+        np.add.at(nan_accumulation, tuple(mesh), validmask)
+        new_data[nan_accumulation == 0] = np.nan
+
         # convert new_data into an xarray
         new_data = xr.DataArray(
             new_data,
