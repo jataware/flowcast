@@ -738,6 +738,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         if var.time_regrid_type != TimeRegridType.interp:
             raise NotImplementedError(f'other time regrid types not yet implemented. Got: {var.time_regrid_type}')
         
+        #TODO: handle warning when doing the interpolation
         new_data = var.data.interp({'time': target_var.data.time})
         var = Variable.from_result(new_data, var)
         var.frequency = target_var.frequency
@@ -813,7 +814,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
             self.bind_value(y, var)
             return 
 
-        if var.geo_regrid_type == GeoRegridType.sum:
+        if var.geo_regrid_type != GeoRegridType.sum:
             raise NotImplementedError(f'other geo regrid types not yet implemented. Got: {var.geo_regrid_type}')
 
         # create bin boundaries for the new latitudes and longitudes
@@ -1015,7 +1016,9 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
             x (str): the identifier of the data to sum
             dims (list[str]): the list of dimensions to sum over
         """
-        raise NotImplementedError()
+        var = self.get_value(x)
+        result = var.data.sum(dim=dims)
+        self.bind_value(y, Variable.from_result(result, var))      
 
 
     @compile
@@ -1066,8 +1069,8 @@ def heat_scenario():
     # pipe.set_time_resolution(Frequency.monthly)
 
     # e.g. target geo/temporal resolution of existing data in pipeline
-    pipe.set_geo_resolution('pop')
-    # pipe.set_geo_resolution('tasmax')
+    # pipe.set_geo_resolution('pop')
+    pipe.set_geo_resolution('tasmax')
     # pipe.set_time_resolution('tasmax')
     pipe.set_time_resolution('pop')
 
@@ -1086,9 +1089,17 @@ def heat_scenario():
     pipe.execute()
 
     # e.g. extract any live results
-    # res = pipe.get_last_value()
+    res = pipe.get_last_value()
     # pop = pipe.get_value('pop')
     # tasmax = pipe.get_value('tasmax')
+
+    # plot all the countries on a single plot
+    for country in res.data['country'].values:
+        res.data.sel(country=country).isel(ssp=0).plot(label=country)
+
+    plt.title('People Exposed to Heatwaves by Country')
+    plt.legend()
+    plt.show()
 
 
 
