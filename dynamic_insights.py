@@ -101,12 +101,13 @@ from matplotlib import pyplot as plt
 import numpy as np
 import pandas as pd
 import xarray as xr
-
-# import rioxarray as rxr # needs to be imported?
-# from rioxarray.exceptions import NoDataInBounds
+import geopandas as gpd
+from rasterio.transform import from_bounds
+from rasterio.features import geometry_mask
+from cftime import DatetimeNoLeap
 
 #TODO: pull this from elwood when it works
-from elwood.elwood import regrid_dataframe
+# from elwood.elwood import regrid_dataframe
 # from regrid import Resolution
 from dataclasses import dataclass
 @dataclass
@@ -199,7 +200,7 @@ def create_lat_bins(lats:np.ndarray, include_left:bool=True, include_right:bool=
 
 def create_lon_bins(lons:np.ndarray, include_left:bool=True, include_right:bool=True) -> np.ndarray:
     ...
-    
+
 
 
 class Scenario(str, Enum):
@@ -361,6 +362,8 @@ class Pipeline:
                 bound_unwrapped = attr_value.unwrapped.__get__(self, Pipeline)
                 setattr(attr_value, "unwrapped", bound_unwrapped)
 
+        # shapefile for country data. Only load if needed
+        self._sf = None
 
 
     def compile(method:MethodType):
@@ -647,7 +650,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
                     .open_dataset(f'data/population/{ssp.upper()}/Total/NetCDF/{ssp}_{year}.nc')    \
                     .rename({f'{ssp}_{year}': 'population'})                                        \
                     .assign_coords(
-                        time=pd.Timestamp(year, 1, 1), 
+                        time=DatetimeNoLeap(year, 1, 1),
                         ssp=('ssp', np.array([scenario.value], dtype='object')) #note for population, only the first number is relevant
                     )
                 all_years.append(data)
@@ -659,7 +662,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         # combine all the data into one xarray with ssp as a dimension
         dataset = xr.concat(all_scenarios, dim='ssp')
 
-        #DEBUG crop to a smaller area
+        # # DEBUG crop to a smaller area
         # cropped_dataset = dataset.sel(lat=slice(30, -10, 1), lon=slice(-10, 30))
         # return cropped_dataset
 
@@ -729,7 +732,17 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
             target (str): the identifier for the target data to match temporal frequency with while regridding
                 should target the resolution of an existing dataset in the pipeline by name, e.g. 'tasmax'
         """
-        raise NotImplementedError()
+        var = self.get_value(x)
+        target_var = self.get_value(target)
+
+        if var.time_regrid_type != TimeRegridType.interp:
+            raise NotImplementedError(f'other time regrid types not yet implemented. Got: {var.time_regrid_type}')
+        
+        new_data = var.data.interp({'time': target_var.data.time})
+        var = Variable.from_result(new_data, var)
+        var.frequency = target_var.frequency
+        self.bind_value(y, var)
+
 
     @compile
     def fixed_geo_regrid(self, y:ResultID, x:OperandID, /, target:Resolution):
@@ -757,7 +770,6 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         var = self.get_value(x)
         target_var = self.get_value(target)
 
-        #TODO: need to handle interpolation/other cases
 
         # TODO: this is maybe a bit restrictive. perhaps we could just deal with when the coordinates are not in the same order
         assert var.data.dims[-2:] == ('lat', 'lon'), f'Variable "{x}" must have final dimensions (lat, lon) to be regridded'
@@ -775,17 +787,34 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         validate_latitudes(old_lats)
         validate_latitudes(new_lats)
 
-
-        # pdb.set_trace()
-        # new_data = regrid_dataframe(data, {'lat_column': 'lat', 'lon_column':'lon'}, ['time'], 0.5,)
-
-
-
         # ensure old_longitude convention ([-180,180] vs [0,360]) matches new_longitude. This also validates longitudes
         old_lon_convention = determine_longitude_convention(old_lons)
         new_lon_convention = determine_longitude_convention(new_lons)
         if old_lon_convention != new_lon_convention:
             old_lons = convert_longitude_convention(old_lons, new_lon_convention)
+
+        # pdb.set_trace()
+        # new_data = regrid_dataframe(data, {'lat_column': 'lat', 'lon_column':'lon'}, ['time'], 0.5,)
+
+        #TODO: need to handle interpolation/other cases
+        if var.geo_regrid_type == GeoRegridType.interp:
+            old_data = xr.DataArray(
+                data,
+                dims=var.data.dims,
+                coords={
+                    **var.data.coords,
+                    'lat': old_lats,
+                    'lon': old_lons,
+                }
+            )
+            new_data = old_data.interp({'lat': target_var.data.lat, 'lon': target_var.data.lon})
+            var = Variable.from_result(new_data, var)
+            var.resolution = target_var.resolution
+            self.bind_value(y, var)
+            return 
+
+        if var.geo_regrid_type == GeoRegridType.sum:
+            raise NotImplementedError(f'other geo regrid types not yet implemented. Got: {var.geo_regrid_type}')
 
         # create bin boundaries for the new latitudes and longitudes
         #TODO: break out bin creation into functions
@@ -830,7 +859,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
 
         # Accumulate number of valid values per new cell    . anywhere that didn't have any valid values should be nan
         np.add.at(nan_accumulation, tuple(mesh), validmask)
-        new_data[nan_accumulation == 0] = np.nan
+        new_data[nan_accumulation == 0] = np.nan #TODO: perhaps if original data doesn't contain any nans, don't need this step?
 
         # convert new_data into an xarray
         new_data = xr.DataArray(
@@ -867,15 +896,6 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
             assert self.frequency is not None, f'Pipeline must have a target temporal resolution before performing regrid operation on "{x}"'
 
         #TODO: need to do regridding operations that reduce size of data before ones that increase it
-        # perform the geo regrid
-        if self.resolution is not None and self.env[x].resolution != self.resolution:
-            tmp_id = self._next_tmp_id()
-            if isinstance(self.resolution, Resolution):
-                self.fixed_geo_regrid.unwrapped(tmp_id, x, self.resolution)
-            else:
-                self.matched_geo_regrid.unwrapped(tmp_id, x, self.resolution)
-            x = tmp_id
-
         # perform the time regrid
         if self.frequency is not None and self.env[x].frequency != self.frequency:
             tmp_id = self._next_tmp_id()
@@ -883,6 +903,15 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
                 self.fixed_time_regrid.unwrapped(tmp_id, x, self.frequency)
             else:
                 self.matched_time_regrid.unwrapped(tmp_id, x, self.frequency)
+            x = tmp_id
+        
+        # perform the geo regrid
+        if self.resolution is not None and self.env[x].resolution != self.resolution:
+            tmp_id = self._next_tmp_id()
+            if isinstance(self.resolution, Resolution):
+                self.fixed_geo_regrid.unwrapped(tmp_id, x, self.resolution)
+            else:
+                self.matched_geo_regrid.unwrapped(tmp_id, x, self.resolution)
             x = tmp_id
 
         return x
@@ -922,8 +951,59 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
             x (str): the identifier of the data to split
             countries (list[str]): the list of countries to split the data by
         """
-        raise NotImplementedError()
-    
+
+        var = self.get_value(x)
+
+        data = var.data
+        lat: np.ndarray = data.lat.values
+        lon: np.ndarray = data.lon.values
+        lon_grid, lat_grid = np.meshgrid(lon, lat)
+
+
+        # ensure data has correct coordinate system
+        # data = data.rio.write_crs(4326)
+
+
+
+        # if no countries are specified, use all of them
+        if countries is None:
+            countries = self.sf['NAME_0'].unique().tolist()
+
+        # get the shapefile rows for the countries we want
+        countries_set = set(countries)
+        countries_shp = self.sf[self.sf['NAME_0'].isin(countries_set)]
+
+        # sort the countries in countries_shp to match the order of the countries in the data
+        countries_shp = countries_shp.set_index('NAME_0').loc[countries].reset_index()
+
+        # set up new np array of shape [len(countries), *data.shape]
+        out_data = np.zeros((len(countries), *data.shape), dtype=data.dtype)
+        
+        for i, (_, country, gid, geometry) in enumerate(countries_shp.itertuples()):
+            print(f'processing {country}...')
+
+            # Generate a mask for the current country
+            transform = from_bounds(lon.min(), lat.min(), lon.max(), lat.max(), len(lon), len(lat))
+            mask = geometry_mask([geometry], transform=transform, invert=True, out_shape=(len(lat), len(lon)))
+
+            # apply the mask to the data
+            masked_data = data.where(xr.DataArray(mask, coords={'lat':lat, 'lon':lon}, dims=['lat', 'lon']))
+
+            # insert the masked data into the output array
+            out_data[i] = masked_data
+
+        # combine all the data into a new DataArray with a country dimension
+        out_data = xr.DataArray(
+            out_data,
+            dims=('country', *data.dims),
+            coords={
+                'country': countries,
+                **data.coords,
+            }
+        )
+        
+        # save the result to the pipeline namespace
+        self.bind_value(y, Variable.from_result(out_data, var))
 
     @compile
     def sum(self, y:ResultID, x:OperandID, /, dims:list[str]):
@@ -956,7 +1036,13 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         for func, args, kwargs in self.steps:
             func(*args, **kwargs)
 
-
+    @property
+    def sf(self):
+        """Get the country shapefile"""
+        if self._sf is None:
+            print(f'Loading country shapefile...')
+            self._sf = gpd.read_file('gadm_0/gadm36_0.shp')
+        return self._sf
 
 
 def get_available_cmip6_data() -> list[tuple[CMIP6Data, Model, Scenario, Realization]]:
@@ -980,9 +1066,10 @@ def heat_scenario():
     # pipe.set_time_resolution(Frequency.monthly)
 
     # e.g. target geo/temporal resolution of existing data in pipeline
-    # pipe.set_geo_resolution('pop')
-    pipe.set_geo_resolution('tasmax')
-    pipe.set_time_resolution('tasmax')
+    pipe.set_geo_resolution('pop')
+    # pipe.set_geo_resolution('tasmax')
+    # pipe.set_time_resolution('tasmax')
+    pipe.set_time_resolution('pop')
 
     # load the data
     pipe.load('pop', OtherData.population)
@@ -991,7 +1078,7 @@ def heat_scenario():
     # operations on the data to perform the scenario
     pipe.threshold('heat', 'tasmax', Threshold(308.15, ThresholdType.greater_than))
     pipe.multiply('exposure0', 'heat', 'pop')
-    pipe.country_split('exposure1', 'exposure0', ['China', 'India', 'United States', 'Canada', 'Mexico'])
+    pipe.country_split('exposure1', 'exposure0', ['China', 'India', 'United States', 'Canada', 'Mexico', 'Brazil', 'Australia'])
     pipe.sum('exposure2', 'exposure1', dims=['lat', 'lon'])
     pipe.save('exposure2', 'exposure.nc')
 
