@@ -229,7 +229,7 @@ class CMIP6Data(str, Enum):
 
 class OtherData(str, Enum):
     population = 'population'
-    land_use = 'land_use'
+    land_cover = 'land_cover'
 
 
 class Frequency(Enum):
@@ -240,10 +240,10 @@ class Frequency(Enum):
 class ThresholdType(Enum):
     greater_than = auto()
     less_than = auto()
-    greater_than_or_equal_to = auto()
-    less_than_or_equal_to = auto()
-    equal_to = auto()
-    not_equal_to = auto()
+    greater_than_or_equal = auto()
+    less_than_or_equal = auto()
+    equal = auto()
+    not_equal = auto()
 
 @dataclass
 class Threshold:
@@ -283,7 +283,7 @@ regrid_map:dict[CMIP6Data|OtherData, tuple[GeoRegridType,TimeRegridType]] = {
     # CMIP6Data.tas: (GeoRegridType.cdo_mean, TimeRegridType.xr_interp),
     # CMIP6Data.pr: (GeoRegridType.cdo_sum, TimeRegridType.xr_interp),
     OtherData.population: (GeoRegridType.sum, TimeRegridType.interp),
-    OtherData.land_use: (GeoRegridType.nearest, TimeRegridType.none),
+    OtherData.land_cover: (GeoRegridType.nearest, TimeRegridType.none),
     #TODO: other variables as needed
 }
 
@@ -570,7 +570,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         
         if data == OtherData.population:
             var = self.get_population_data(self.scenarios)
-        elif data == OtherData.land_use:
+        elif data == OtherData.land_cover:
             var = self.get_land_use_data()
         elif isinstance(data, CMIP6Data):
             assert model is not None, 'Must specify a model for CMIP6 data'
@@ -705,13 +705,13 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
             result = var.data > threshold.value
         elif threshold.type == ThresholdType.less_than:
             result = var.data < threshold.value
-        elif threshold.type == ThresholdType.greater_than_or_equal_to:
+        elif threshold.type == ThresholdType.greater_than_or_equal:
             result = var.data >= threshold.value
-        elif threshold.type == ThresholdType.less_than_or_equal_to:
+        elif threshold.type == ThresholdType.less_than_or_equal:
             result = var.data <= threshold.value
-        elif threshold.type == ThresholdType.equal_to:
+        elif threshold.type == ThresholdType.equal:
             result = var.data == threshold.value
-        elif threshold.type == ThresholdType.not_equal_to:
+        elif threshold.type == ThresholdType.not_equal:
             result = var.data != threshold.value
         else:
             raise ValueError(f'Unrecognized threshold type: {threshold.type}. Expected one of: {[*ThresholdType.__members__.values()]}')
@@ -1130,7 +1130,7 @@ def crop_scenario():
     pipe.set_time_resolution(Frequency.monthly)
     pipe.load('tas', CMIP6Data.tas, Model.FGOALS_f3_L)
     pipe.load('pr', CMIP6Data.pr, Model.FGOALS_f3_L)
-    pipe.load('land_use', OtherData.land_use)
+    pipe.load('land_cover', OtherData.land_cover)
 
     #TODO: rest of scenario
 
@@ -1142,13 +1142,13 @@ def demo_scenario():
     )
     pipe.set_geo_resolution('modis')
     pipe.set_time_resolution('pop')
-    pipe.load('modis', OtherData.land_use)
+    pipe.load('modis', OtherData.land_cover)
     pipe.load('pop', OtherData.population)
     pipe.load('tasmax', CMIP6Data.tasmax, Model.CAS_ESM2_0)
     pipe.threshold('heat', 'tasmax', Threshold(308.15, ThresholdType.greater_than))
     pipe.multiply('exposure0', 'heat', 'pop')
-    pipe.threshold('urban_mask', 'modis', Threshold(13, ThresholdType.equal_to))
-    pipe.threshold('not_urban_mask', 'modis', Threshold(13, ThresholdType.not_equal_to))
+    pipe.threshold('urban_mask', 'modis', Threshold(13, ThresholdType.equal))
+    pipe.threshold('not_urban_mask', 'modis', Threshold(13, ThresholdType.not_equal))
     pipe.multiply('urban_exposure', 'exposure0', 'urban_mask')
     pipe.multiply('not_urban_exposure', 'exposure0', 'not_urban_mask')
     pipe.sum('global_urban_exposure', 'urban_exposure', dims=['lat', 'lon'])
