@@ -66,6 +66,8 @@ def main():
             nodes_to_plot.append((parent, node['data']['input'][:-3]))
             continue
 
+        raise NotImplementedError(f'Parsing of node type {node["type"]} not implemented.')
+
         
         
     # run the pipeline
