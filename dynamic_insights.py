@@ -257,6 +257,7 @@ class GeoRegridType(Enum):
     min = auto()
     max = auto()
     nearest = auto()
+    none = auto()
     # xr_interp = auto()
     # cdo_sum = auto()
     # cdo_max = auto()
@@ -269,6 +270,7 @@ class TimeRegridType(Enum):
     # mean = auto()
     interp = auto()
     nearest = auto()
+    none = auto()
     # xr_interp = auto()
     # xr_nearest = auto()
     #TODO: other temporal regrid types as needed
@@ -281,7 +283,7 @@ regrid_map:dict[CMIP6Data|OtherData, tuple[GeoRegridType,TimeRegridType]] = {
     # CMIP6Data.tas: (GeoRegridType.cdo_mean, TimeRegridType.xr_interp),
     # CMIP6Data.pr: (GeoRegridType.cdo_sum, TimeRegridType.xr_interp),
     OtherData.population: (GeoRegridType.sum, TimeRegridType.interp),
-    # OtherData.land_use: (GeoRegridType.cdo_nearest, TimeRegridType.xr_nearest),
+    OtherData.land_use: (GeoRegridType.nearest, TimeRegridType.none),
     #TODO: other variables as needed
 }
 
@@ -580,13 +582,14 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         geo_regrid_type, time_regrid_type = regrid_map[data]
 
         # extract dataarray from dataset, and wrap in a Variable (indicating current geo/time resolution is itself)
-        var = Variable(var[data.value], name, name, time_regrid_type, geo_regrid_type)
+        var = Variable(var, name, name, time_regrid_type, geo_regrid_type)
 
         # save the variable to the pipeline namespace under the given identifier
         self.bind_value(name, var)
 
 
-    def load_cmip6_data(self, variable:CMIP6Data, model:Model) -> xr.Dataset:
+    #TODO: make this handle DataArrays instead of Datasets 
+    def load_cmip6_data(self, variable:CMIP6Data, model:Model) -> xr.DataArray:
         """get an xarray with cmip6 data from the specified model"""
 
         all_realizations: list[xr.Dataset] = []
@@ -620,23 +623,24 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         # combine all the data into one xarray with realization as a dimension
         dataset = xr.concat(all_realizations, dim='realization')
 
-        return dataset
+        return dataset[variable.value]
 
 
+    #TODO: make this return a DataArray instead of a Dataset
     @staticmethod
-    def CAS_ESM2_0_cmip_loader(variable: CMIP6Data, realization: Realization, scenario: Scenario) -> xr.Dataset:
+    def CAS_ESM2_0_cmip_loader(variable: CMIP6Data, realization: Realization, scenario: Scenario) -> xr.Dataset:#xr.DataArray:
         """Data loader for the CAS-ESM2-0 model"""
-        return xr.open_dataset(f'data/cmip6/{variable}/{variable}_Amon_CAS-ESM2-0_{scenario}_{realization}_gn_201501-210012.nc')
+        return xr.open_dataset(f'data/cmip6/{variable}/{variable}_Amon_CAS-ESM2-0_{scenario}_{realization}_gn_201501-210012.nc')#[variable.value]
 
-
+    #TODO: make this return a DataArray instead of a Dataset
     @staticmethod
-    def FGOALS_f3_L_cmip_loader(variable: CMIP6Data, realization: Realization, scenario: Scenario) -> xr.Dataset:
+    def FGOALS_f3_L_cmip_loader(variable: CMIP6Data, realization: Realization, scenario: Scenario) -> xr.Dataset:#xr.DataArray:
         """Data loader for the FGOALS-f3-L model"""        
-        return xr.open_dataset(f'data/cmip6/{variable}/{variable}_Amon_FGOALS-f3-L_{scenario}_{realization}_gr_201501-210012.nc')
+        return xr.open_dataset(f'data/cmip6/{variable}/{variable}_Amon_FGOALS-f3-L_{scenario}_{realization}_gr_201501-210012.nc')#[variable.value]
 
   
     @staticmethod
-    def get_population_data(scenarios: list[Scenario]) -> xr.Dataset:
+    def get_population_data(scenarios: list[Scenario]) -> xr.DataArray:
         """get an xarray with the specified population data"""
 
         all_scenarios: list[xr.Dataset] = []
@@ -666,12 +670,20 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         # cropped_dataset = dataset.sel(lat=slice(30, -10, 1), lon=slice(-10, 30))
         # return cropped_dataset
 
-        return dataset
+        return dataset['population']
 
 
     @staticmethod
     def get_land_use_data() -> xr.Dataset:
-        raise NotImplementedError()
+        modis = xr.open_dataset('data/MODIS/land-use-5km.nc')
+        modis = modis['LC_Type1']
+        modis['time'] = modis.indexes['time'].to_datetimeindex().map(lambda dt: DatetimeNoLeap(dt.year, dt.month, dt.day))
+        
+        #TODO: handling modis over time? for now just take a single frame
+        modis = modis.isel(time=0).drop(['time', 'crs'])
+
+        return modis
+
 
 
     #TODO: other models' data loaders as needed
@@ -734,6 +746,11 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         """
         var = self.get_value(x)
         target_var = self.get_value(target)
+
+        if var.time_regrid_type == TimeRegridType.none:
+            #skip regridding (i.e. data has no time dimension)
+            self.bind_value(y, var)
+            return
 
         if var.time_regrid_type != TimeRegridType.interp:
             raise NotImplementedError(f'other time regrid types not yet implemented. Got: {var.time_regrid_type}')
@@ -1118,6 +1135,34 @@ def crop_scenario():
     #TODO: rest of scenario
 
 
+def demo_scenario():
+    pipe = Pipeline(
+        realizations=Realization.r1i1p1f1,
+        scenarios=Scenario.ssp585
+    )
+    pipe.set_geo_resolution('modis')
+    pipe.set_time_resolution('pop')
+    pipe.load('modis', OtherData.land_use)
+    pipe.load('pop', OtherData.population)
+    pipe.load('tasmax', CMIP6Data.tasmax, Model.CAS_ESM2_0)
+    pipe.threshold('heat', 'tasmax', Threshold(308.15, ThresholdType.greater_than))
+    pipe.multiply('exposure0', 'heat', 'pop')
+    pipe.threshold('urban_mask', 'modis', Threshold(13, ThresholdType.equal_to))
+    pipe.threshold('not_urban_mask', 'modis', Threshold(13, ThresholdType.not_equal_to))
+    pipe.multiply('urban_exposure', 'exposure0', 'urban_mask')
+    pipe.multiply('not_urban_exposure', 'exposure0', 'not_urban_mask')
+    pipe.sum('global_urban_exposure', 'urban_exposure', dims=['lat', 'lon'])
+    pipe.sum('global_not_urban_exposure', 'not_urban_exposure', dims=['lat', 'lon'])
+    pipe.save('global_urban_exposure', 'global_urban_exposure.nc')
+    pipe.save('global_not_urban_exposure', 'global_not_urban_exposure.nc')
+
+    pipe.execute()
+
+    pdb.set_trace()
+    ...
+
+
 if __name__ == '__main__':
-    heat_scenario()
+    # heat_scenario()
     # crop_scenario()
+    demo_scenario()
