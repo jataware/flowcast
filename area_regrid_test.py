@@ -4,12 +4,40 @@ import numpy as np
 import torch
 from torch.cuda import OutOfMemoryError
 import xarray as xr
-from dynamic_insights import Pipeline, Realization, Scenario, CMIP6Data, OtherData, Threshold, ThresholdType, Model
+from dynamic_insights import Pipeline, Realization, Scenario, CMIP6Data, OtherData, Threshold, ThresholdType, Model, determine_longitude_convention, convert_longitude_convention, LongitudeConvention
 from matplotlib import pyplot as plt
 from enum import Enum, auto
 from typing import Callable
 import pdb
 
+
+def inplace_set_longitude_convention(data:xr.DataArray, convention:LongitudeConvention) -> None:
+    """
+    Set the longitude convention of the data, and shift so that coordinates are monotonically increasing
+    """
+    if determine_longitude_convention(data['lon'].data) in [convention, LongitudeConvention.ambiguous]:
+        return
+
+    # map the longitude values to the new convention
+    old_lon = data['lon'].data
+    new_lon = convert_longitude_convention(old_lon, convention)
+
+    # make lon the last axis for easier manipulation
+    lon_idx = data.dims.index('lon')
+    new_data = np.moveaxis(data.data, lon_idx, -1)
+
+    # shift the data so that the lon coordinates are monotonically increasing
+    sorted_indices = np.argsort(new_lon)
+    new_lon = new_lon[sorted_indices]
+    new_data = new_data[..., sorted_indices]
+
+    # move the lon axis back, and make the data contiguous
+    new_data = np.moveaxis(new_data, -1, lon_idx)
+    new_data = np.ascontiguousarray(new_data)
+
+    # update the data in place
+    data.data = new_data
+    data['lon'] = new_lon
 
 
 
@@ -29,6 +57,22 @@ def main():
     tasmax = pipe.get_value('tasmax').data
 
 
+    #ensure the lon conventions match
+    inplace_set_longitude_convention(pop, LongitudeConvention.neg180_180)
+    inplace_set_longitude_convention(modis, LongitudeConvention.neg180_180)
+    inplace_set_longitude_convention(tasmax, LongitudeConvention.neg180_180)
+
+    #convert tasmax to the resolution of population
+    new_tasmax = regrid_1d(tasmax, pop['lat'].data, 'lat', aggregation=Aggregation.max)
+    new_tasmax = regrid_1d(new_tasmax, pop['lon'].data, 'lon', aggregation=Aggregation.max)
+    plt.figure()
+    plt.imshow(new_tasmax.isel(time=0,ssp=-1))
+    plt.imshow(tasmax.isel(time=0,ssp=-1))
+    plt.show()
+    pdb.set_trace()
+    
+    
+    
     #conservatively convert population to the resolution of modis
     new_pop = regrid_1d(pop, modis['lat'].data, 'lat', aggregation=Aggregation.conserve)
     new_pop = regrid_1d(new_pop, modis['lon'].data, 'lon', aggregation=Aggregation.conserve)
@@ -224,8 +268,9 @@ def regrid_1d_conserve_accumulate_gpu(old_data:np.ndarray, overlaps:np.ndarray) 
 
 def regrid_1d_conserve_accumulate_cpu(old_data:np.ndarray, overlaps:np.ndarray) -> np.ndarray:
     try:
+        np.random.random((100000, 100000))
         return old_data @ overlaps
-    except Exception as e:
+    except MemoryError as e:
         pdb.set_trace()
         ...
     pdb.set_trace()
@@ -244,12 +289,15 @@ def regrid_1d_general_accumulate_cpu(old_data:np.ndarray, overlaps:np.ndarray, a
     ...
 
 def replace_nans_gpu(result:np.ndarray, validmask:np.ndarray, overlaps:np.ndarray):
+
+    #check if it's even necessary to replace nans
     if np.all(validmask):
         return
+    
     try:
         # compute the new locations of nans, and move the result off the gpu to free up memory
         gpu_overlaps = torch.tensor(overlaps, device='cuda')
-        gpu_validmask = torch.tensor(validmask, device='cuda', dtype=torch.float32)
+        gpu_validmask = torch.tensor(validmask, device='cuda', dtype=torch.float64)
 
         gpu_nan_accumulation = gpu_validmask @ (gpu_overlaps > 0).to(gpu_validmask.dtype)
         nan_accumulation = gpu_nan_accumulation.cpu().numpy()
