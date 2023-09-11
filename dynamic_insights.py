@@ -195,12 +195,48 @@ def convert_longitude_convention(lons:np.ndarray, target_convention:LongitudeCon
         raise ValueError(f'Invalid target longitude convention: {target_convention}. Expected one of: {[*LongitudeConvention.__members__.values()]}')
 
 
-def create_lat_bins(lats:np.ndarray, include_left:bool=True, include_right:bool=True) -> np.ndarray:
-    ...
+def create_lat_bins(lats:np.ndarray, include_first:bool=True, include_last:bool=True) -> np.ndarray:
+    lat_delta = lats[1] - lats[0]
+    lat_bins = np.concatenate((lats, [lats[-1] + lat_delta])) - lat_delta/2
 
-def create_lon_bins(lons:np.ndarray, include_left:bool=True, include_right:bool=True) -> np.ndarray:
-    ...
+    # add small epsilon to first and last elements to ensure that the bounds are inclusive
+    eps = np.sign(lat_delta) * 1e-10
+    lat_bins[0] += -eps if include_first else eps
+    lat_bins[-1] += eps if include_last else -eps
 
+    return lat_bins
+
+def create_lon_bins(lons:np.ndarray, include_first:bool=True, include_last:bool=True) -> np.ndarray:
+    lon_delta = lons[1] - lons[0]
+    lon_bins = np.concatenate((lons, [lons[-1] + lon_delta])) - lon_delta/2
+    
+    # add small epsilon to first and last elements to ensure that the bounds are inclusive
+    eps = np.sign(lon_delta) * 1e-10
+    lon_bins[0] += -eps if include_first else eps
+    lon_bins[-1] += eps if include_last else -eps
+    
+    return lon_bins
+
+
+def chunk_data(data:xr.DataArray, *, exclude:str|list[str]=None, chunk_size=1) -> xr.DataArray:
+    #convert exclude to a set
+    if exclude is None:
+        exclude = set()
+    elif isinstance(exclude, str):
+        exclude = {exclude}
+    else:
+        exclude = set(exclude)
+
+    data = data.chunk({coord: chunk_size for coord in data.coords if coord not in exclude})
+    
+    return data
+
+
+
+
+def maybe_upscale_data(data, old_lats, old_lons, new_lats, new_lons):
+    #TODO: fill in implementation
+    return old_lats, old_lons, data
 
 
 class Scenario(str, Enum):
@@ -269,6 +305,8 @@ class GeoRegridType(Enum):
 class TimeRegridType(Enum):
     # mean = auto()
     interp = auto()
+    min = auto()
+    max = auto()
     nearest = auto()
     none = auto()
     # xr_interp = auto()
@@ -279,9 +317,9 @@ class TimeRegridType(Enum):
 
 ## For every type of data, indicate what type of regridding operation is appropriate
 regrid_map:dict[CMIP6Data|OtherData, tuple[GeoRegridType,TimeRegridType]] = {
-    CMIP6Data.tasmax: (GeoRegridType.interp, TimeRegridType.interp),
-    # CMIP6Data.tas: (GeoRegridType.cdo_mean, TimeRegridType.xr_interp),
-    # CMIP6Data.pr: (GeoRegridType.cdo_sum, TimeRegridType.xr_interp),
+    CMIP6Data.tasmax: (GeoRegridType.interp, TimeRegridType.max),
+    CMIP6Data.tas: (GeoRegridType.interp, TimeRegridType.interp),
+    CMIP6Data.pr: (GeoRegridType.interp, TimeRegridType.interp),
     OtherData.population: (GeoRegridType.sum, TimeRegridType.interp),
     OtherData.land_cover: (GeoRegridType.nearest, TimeRegridType.none),
     #TODO: other variables as needed
@@ -731,6 +769,24 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
             x (str): the identifier of the data to regrid
             target (Frequency): the fixed target temporal frequency to regrid to, e.g. Frequency.monthly
         """
+        var = self.get_value(x)
+        if var.frequency == target or var.time_regrid_type == TimeRegridType.none:
+            #skip regridding
+            self.bind_value(y, var)
+            return
+        
+        if var.time_regrid_type != TimeRegridType.interp:
+            raise NotImplementedError(f'other time regrid types not yet implemented. Got: {var.time_regrid_type}')
+
+        min_time = var.data.time.min()
+        max_time = var.data.time.max()
+        
+        #round min/max to nearest value that aligns with the target frequency
+        pdb.set_trace()
+        
+        new_times = pd.date_range(min_time, max_time, freq=target.value)
+
+        pdb.set_trace()
         raise NotImplementedError()
     
     @compile
@@ -756,7 +812,9 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
             raise NotImplementedError(f'other time regrid types not yet implemented. Got: {var.time_regrid_type}')
         
         #TODO: handle warning when doing the interpolation
-        new_data = var.data.interp({'time': target_var.data.time})
+        data = var.data
+        data = chunk_data(data, exclude=['time'])
+        new_data = data.interp({'time': target_var.data.time})
         var = Variable.from_result(new_data, var)
         var.frequency = target_var.frequency
         self.bind_value(y, var)
@@ -799,7 +857,6 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         new_lats: np.ndarray = target_var.data.lat.data
         new_lons: np.ndarray = target_var.data.lon.data
         data: np.ndarray = var.data.data
-        method = 'mean' #TODO: pull this from the geo_regrid_type
 
         # validate latitudes
         validate_latitudes(old_lats)
@@ -810,9 +867,6 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         new_lon_convention = determine_longitude_convention(new_lons)
         if old_lon_convention != new_lon_convention:
             old_lons = convert_longitude_convention(old_lons, new_lon_convention)
-
-        # pdb.set_trace()
-        # new_data = regrid_dataframe(data, {'lat_column': 'lat', 'lon_column':'lon'}, ['time'], 0.5,)
 
         #TODO: need to handle interpolation/other cases
         if var.geo_regrid_type == GeoRegridType.interp:
@@ -825,6 +879,8 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
                     'lon': old_lons,
                 }
             )
+            #chunk along other dimensions so interpolation doesn't run out of memory
+            old_data = chunk_data(old_data, exclude=['lat', 'lon'])
             new_data = old_data.interp({'lat': target_var.data.lat, 'lon': target_var.data.lon})
             var = Variable.from_result(new_data, var)
             var.resolution = target_var.resolution
@@ -834,22 +890,17 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         if var.geo_regrid_type != GeoRegridType.sum:
             raise NotImplementedError(f'other geo regrid types not yet implemented. Got: {var.geo_regrid_type}')
 
+        
+        # if resolution of data is to be increased, upscale data to higher than target so that digitize works correctly
+        # old_lats, old_lons, data = maybe_upscale_data(data, old_lats, old_lons, new_lats, new_lons)
+        
+        
         # create bin boundaries for the new latitudes and longitudes
         #TODO: break out bin creation into functions
         #TODO: bin creation needs to consider current lat/lon values. e.g. tasmax lon values are already binned, just need to add 360 as upper bound
-        # new_lat_bins = create_lat_bins(new_lats)
-        # new_lon_bins = create_lon_bins(new_lons)
-        
-        new_lat_delta = new_lats[1] - new_lats[0]
-        new_lat_bins = np.concatenate((new_lats, [new_lats[-1] + new_lat_delta])) - new_lat_delta/2
-        new_lon_delta = new_lons[1] - new_lons[0]
-        new_lon_bins = np.concatenate((new_lons, [new_lons[-1] + new_lon_delta])) - new_lon_delta/2
+        new_lat_bins = create_lat_bins(new_lats)
+        new_lon_bins = create_lon_bins(new_lons)
 
-        # add small epsilon to first and last elements to ensure that the bounds are inclusive
-        new_lat_bins[0] += -np.sign(new_lat_delta) * 1e-10
-        new_lat_bins[-1] += np.sign(new_lat_delta) * 1e-10
-        new_lon_bins[0] += -np.sign(new_lon_delta) * 1e-10
-        new_lon_bins[-1] += np.sign(new_lon_delta) * 1e-10
 
         # Find the corresponding bins for latitudes and longitudes
         lat_idx = np.digitize(old_lats, new_lat_bins) - 1
@@ -1089,7 +1140,8 @@ def heat_scenario():
     # pipe.set_geo_resolution('pop')
     pipe.set_geo_resolution('tasmax')
     # pipe.set_time_resolution('tasmax')
-    pipe.set_time_resolution('pop')
+    # pipe.set_time_resolution('pop')
+    pipe.set_time_resolution(Frequency.yearly)
 
     # load the data
     pipe.load('pop', OtherData.population)
@@ -1161,8 +1213,27 @@ def demo_scenario():
     pdb.set_trace()
     ...
 
+def debug_scenario():
+    pipe = Pipeline(
+        realizations=Realization.r1i1p1f1,
+        scenarios=Scenario.ssp585
+    )
+    pipe.set_geo_resolution('modis')
+    pipe.set_time_resolution('pop')
+    pipe.load('modis', OtherData.land_cover)
+    pipe.load('pop', OtherData.population)
+    pipe.load('tasmax', CMIP6Data.tasmax, Model.CAS_ESM2_0)
+    pipe.multiply('res', 'pop', 'tasmax')
+
+    print(pipe)
+    pipe.execute()
+
+    # pdb.set_trace()
+    # ...
+
 
 if __name__ == '__main__':
-    # heat_scenario()
+    heat_scenario()
     # crop_scenario()
-    demo_scenario()
+    # demo_scenario()
+    # debug_scenario()
