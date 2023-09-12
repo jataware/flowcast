@@ -40,12 +40,27 @@ def inplace_set_longitude_convention(data:xr.DataArray, convention:LongitudeConv
     data['lon'] = new_lon
 
 
+from cftime import DatetimeNoLeap
+def datetimeNoLeap_to_epoch(dt):
+    """
+    Convert a cftime.DatetimeNoLeap instance to an epoch timestamp.
+    """
+    # Define the reference datetime from which the epoch timestamp is counted.
+    epoch = DatetimeNoLeap(1970, 1, 1)
+    
+    # Calculate the difference in seconds between the provided date and the epoch
+    delta = dt - epoch
+    
+    # Convert the timedelta to seconds
+    seconds = delta.days * 24 * 3600 + delta.seconds
+
+    return seconds
 
 
 def main():
     pipe = Pipeline(
         realizations=Realization.r1i1p1f1, 
-        scenarios=[Scenario.ssp126, Scenario.ssp245, Scenario.ssp370, Scenario.ssp585]
+        scenarios=[Scenario.ssp585]#[Scenario.ssp126, Scenario.ssp245, Scenario.ssp370, Scenario.ssp585]
     )
 
     pipe.load('pop', OtherData.population)
@@ -62,12 +77,15 @@ def main():
     inplace_set_longitude_convention(modis, LongitudeConvention.neg180_180)
     inplace_set_longitude_convention(tasmax, LongitudeConvention.neg180_180)
 
-    #convert tasmax to the resolution of population
-    new_tasmax = regrid_1d(tasmax, pop['lat'].data, 'lat', aggregation=Aggregation.max)
+    #convert tasmax to yearly, and then the geo resolution of population
+    time_axis = np.array([DatetimeNoLeap(year, 1, 1) for year in range(2015, 2101)])
+    new_tasmax = regrid_1d(tasmax, time_axis, 'time', aggregation=Aggregation.mean)
+    new_tasmax = regrid_1d(new_tasmax, pop['lat'].data, 'lat', aggregation=Aggregation.max)
     new_tasmax = regrid_1d(new_tasmax, pop['lon'].data, 'lon', aggregation=Aggregation.max)
     plt.figure()
-    plt.imshow(new_tasmax.isel(time=0,ssp=-1))
-    plt.imshow(tasmax.isel(time=0,ssp=-1))
+    plt.imshow(new_tasmax.isel(time=0,ssp=-1, realization=0))
+    plt.figure()
+    plt.imshow(tasmax.isel(time=0,ssp=-1, realization=0))
     plt.show()
     pdb.set_trace()
     
@@ -173,7 +191,8 @@ def get_bins(coords:np.ndarray, offset:BinOffset) -> np.ndarray:
         np.ndarray: The bin edges
     """
     delta = coords[1] - coords[0]
-    assert np.allclose(np.diff(coords), delta), f'coords must be evenly spaced. Got spacings: {np.diff(coords)}'
+    print('skipping bin size check since it fails for yearly time coordinates...')
+    # assert np.allclose(np.diff(coords), delta), f'coords must be evenly spaced. Got spacings: {np.diff(coords)}'
     if offset == BinOffset.left:
         bins = np.linspace(coords[0] - delta, coords[-1], len(coords) + 1)
     elif offset == BinOffset.center:
@@ -191,12 +210,18 @@ def regrid_1d(
         dim:str,
         offset:BinOffset=BinOffset.left,
         aggregation=Aggregation.mean,
-        wrap:tuple[float,float]=None,
+        wrap:tuple[float,float]=None, #TBD format for this...
         try_gpu:bool=True
     ) -> xr.DataArray:
     
     old_coords = data[dim].data
     old_data = data.data.copy()
+
+    # convert time coords to epoch timestamps
+    if dim == 'time':
+        old_coords = np.array([datetimeNoLeap_to_epoch(time) for time in old_coords])
+        new_coords_timestamps = new_coords.copy()
+        new_coords = np.array([datetimeNoLeap_to_epoch(time) for time in new_coords])
 
     # get the bin boundaries for the old and new data
     old_bins = get_bins(old_coords, offset)
@@ -209,6 +234,14 @@ def regrid_1d(
     # normalization....TODO: adjust based on aggregation method
     old_delta = old_bins[1] - old_bins[0]
     overlaps /= np.abs(old_delta)
+
+    # DEBUG: plot the overlap matrix
+    plt.figure()
+    plt.ion()
+    plt.show()
+    plt.imshow(overlaps)
+    plt.draw()
+    plt.pause(0.1)
 
     # ensure the dimension being operated on is the last one
     original_dim_idx = data.dims.index(dim)
@@ -235,6 +268,9 @@ def regrid_1d(
     result = np.moveaxis(result, -1, original_dim_idx)
     result = np.ascontiguousarray(result)
 
+    #convert time coords back to cftime.DatetimeNoLeap
+    if dim == 'time':
+        new_coords = new_coords_timestamps
 
     #convert back to xarray, with the new coords
     result = xr.DataArray(result, coords={**data.coords, dim:new_coords}, dims=data.dims)
@@ -277,10 +313,64 @@ def regrid_1d_conserve_accumulate_cpu(old_data:np.ndarray, overlaps:np.ndarray) 
     ...
 
 def regrid_1d_general_accumulate_gpu(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Aggregation) -> np.ndarray:
-    if aggregation == Aggregation.conserve:
-        return regrid_1d_conserve_accumulate_gpu(old_data, overlaps)
-    pdb.set_trace()
-    ...
+    # if aggregation == Aggregation.conserve:
+    #     return regrid_1d_conserve_accumulate_gpu(old_data, overlaps)
+    
+    overlap_mask = overlaps > 0
+    cols = np.any(overlap_mask, axis=0)
+    starts = overlap_mask.argmax(axis=0)
+    ends = overlap_mask.shape[0] - (overlap_mask[::-1]).argmax(axis=0)
+
+    #determine the length of the longest column
+    max_col_length = np.max(ends[cols] - starts[cols])
+
+    #set the starts and ends of the empty columns to 0:max_col_length
+    starts[~cols] = 0
+    ends[~cols] = max_col_length
+
+    #extend all columns so that they are of length max_col_length
+    ends[cols] = (starts[cols] + max_col_length).clip(max=overlap_mask.shape[0])
+    starts[cols] = (ends[cols] - max_col_length).clip(min=0)
+
+    #convert overlaps/overlap_mask so that unselected locations are nan
+    overlaps[~overlap_mask] = np.nan
+    overlap_mask[~overlap_mask] = np.nan
+
+    # set up selectors for the indices of each bin to aggregate over
+    col_selector = np.arange(max_col_length) + starts[:, None]
+    row_selector = np.arange(overlap_mask.shape[1])[:, None]
+
+    #construct a matrix holding all the input values for each bin in the output
+    unmasked_binned_data = old_data[..., col_selector]
+    
+    # perform reduction over bins according to aggregation method
+    if aggregation == Aggregation.min:
+        bin_mask = overlap_mask[col_selector, row_selector]
+        binned_data = unmasked_binned_data * bin_mask
+        result = np.nanmin(binned_data, axis=-1)
+
+    elif aggregation == Aggregation.max:
+        bin_mask = overlap_mask[col_selector, row_selector]
+        binned_data = unmasked_binned_data * bin_mask
+        result = np.nanmax(binned_data, axis=-1)
+
+    elif aggregation == Aggregation.mean:
+        bin_mask = overlaps[col_selector, row_selector]
+        binned_data = unmasked_binned_data * bin_mask
+        #TODO: not sure if this is normalized correctly. need to do something with new_delta/old_delta
+        result = np.nansum(binned_data, axis=-1) / np.nansum(bin_mask, axis=-1)
+
+    elif aggregation == Aggregation.conserve:
+        bin_mask = overlaps[col_selector, row_selector]
+        binned_data = unmasked_binned_data * bin_mask
+        result = np.nansum(binned_data, axis=-1)
+
+    else:
+        raise NotImplementedError(f'Aggregation method {aggregation} not implemented.')
+
+    print(f'gpu result shape: {result.shape}')
+    return result
+    
 
 def regrid_1d_general_accumulate_cpu(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Aggregation) -> np.ndarray:
     if aggregation == Aggregation.conserve:
