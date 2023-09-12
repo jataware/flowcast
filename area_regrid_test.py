@@ -106,20 +106,6 @@ def main():
     inplace_set_longitude_convention(pr, LongitudeConvention.neg180_180)
     inplace_set_longitude_convention(tas, LongitudeConvention.neg180_180)
 
-
-
-    #convert tasmax to yearly, and then the geo resolution of population
-    time_axis = np.array([DatetimeNoLeap(year, 1, 1) for year in range(2015, 2101)])
-    new_tasmax = regrid_1d(tasmax, time_axis, 'time', aggregation=Aggregation.interp_mean)
-    new_tasmax = regrid_1d(new_tasmax, pop['lat'].data, 'lat', aggregation=Aggregation.max)
-    new_tasmax = regrid_1d(new_tasmax, pop['lon'].data, 'lon', aggregation=Aggregation.max)
-    plt.figure()
-    plt.imshow(new_tasmax.isel(time=0,ssp=-1, realization=0))
-    plt.figure()
-    plt.imshow(tasmax.isel(time=0,ssp=-1, realization=0), origin='lower')
-    plt.show()
-
-    pdb.set_trace()
     
 
     # convert pr to yearly, and then the geo resolution of population
@@ -136,7 +122,6 @@ def main():
     pdb.set_trace()
 
 
-
     #convert tas to yearly, and then the geo resolution of population
     time_axis = np.array([DatetimeNoLeap(year, 1, 1) for year in range(2015, 2101)])
     new_tas = regrid_1d(tas, time_axis, 'time', aggregation=Aggregation.interp_mean)
@@ -148,6 +133,19 @@ def main():
     plt.imshow(tas.isel(time=0,ssp=-1, realization=0), origin='lower')
     plt.show()
 
+    pdb.set_trace()
+
+
+    #convert tasmax to yearly, and then the geo resolution of population
+    time_axis = np.array([DatetimeNoLeap(year, 1, 1) for year in range(2015, 2101)])
+    new_tasmax = regrid_1d(tasmax, time_axis, 'time', aggregation=Aggregation.interp_mean)
+    new_tasmax = regrid_1d(new_tasmax, pop['lat'].data, 'lat', aggregation=Aggregation.max)
+    new_tasmax = regrid_1d(new_tasmax, pop['lon'].data, 'lon', aggregation=Aggregation.max)
+    plt.figure()
+    plt.imshow(new_tasmax.isel(time=0,ssp=-1, realization=0))
+    plt.figure()
+    plt.imshow(tasmax.isel(time=0,ssp=-1, realization=0), origin='lower')
+    plt.show()
 
     pdb.set_trace()
     
@@ -165,7 +163,9 @@ def main():
     plt.imshow(np.log(new_pop.isel(time=0,ssp=-1) + 1e-6))
     # plt.imshow(new_pop.isel(time=0,ssp=-1))
     
-    print(f'comparing pop count: {np.nansum(old_pop)} vs {np.nansum(new_pop.isel(time=0,ssp=-1))}')
+    old_pop_count = np.nansum(old_pop)
+    new_pop_count = np.nansum(new_pop.isel(time=0,ssp=-1))
+    print(f'comparing pop count: {old_pop_count=} vs {new_pop_count=}. Error: {np.abs(old_pop_count - new_pop_count) / old_pop_count:.4%}')
 
     plt.show()
     
@@ -179,13 +179,15 @@ def main():
     plt.figure()
     old_pop = pop.isel(time=0,ssp=-1).sel(lat=slice(new_pop['lat'].min(), new_pop['lat'].max(),-1), lon=slice(new_pop['lon'].min(), new_pop['lon'].max()))
     plt.imshow(np.log(old_pop + 1e-6), origin='lower')
-    # plt.imshow(old_pop)
+    # plt.imshow(old_pop, origin='lower')
 
     plt.figure()
     plt.imshow(np.log(new_pop.isel(time=0,ssp=-1) + 1e-6), origin='lower')
-    # plt.imshow(new_pop.isel(time=0,ssp=-1))
+    # plt.imshow(new_pop.isel(time=0,ssp=-1), origin='lower')
 
-    print(f'comparing pop count: {np.nansum(old_pop)} vs {np.nansum(new_pop.isel(time=0,ssp=-1))}')
+    old_pop_count = np.nansum(old_pop)
+    new_pop_count = np.nansum(new_pop.isel(time=0,ssp=-1))
+    print(f'comparing pop count: {old_pop_count=} vs {new_pop_count=}. Error: {np.abs(old_pop_count - new_pop_count) / old_pop_count:.4%}')
 
     plt.show()
 
@@ -243,32 +245,45 @@ def compute_overlap(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     
     return np.ascontiguousarray(overlap, dtype=np.float64)
 
-def convert_to_interp_mean_overlaps(overlaps:np.ndarray) -> None:
+def convert_to_interp_mean_overlaps(overlaps:np.ndarray, offset:BinOffset, old_coords:np.ndarray, new_coords:np.ndarray) -> np.ndarray:
     """
     Convert the overlaps matrix to one that will perform:
     - interpolation for resolution increases
     - mean aggregation for resolution decreases
     """
 
-    if overlaps.shape[0] >= overlaps.shape[1]:
-        # resolution decrease doesn't need any changes
-        return
+    # get the index bounds around where values are nonzero
+    nonzero_indices = np.nonzero(overlaps)
+    old_size = nonzero_indices[0].max() - nonzero_indices[0].min()
+    new_size = nonzero_indices[1].max() - nonzero_indices[1].min()
+    if new_size <= old_size:
+        # resolution decrease just uses plain mean aggregation (i.e. no modification needed)
+        return overlaps
 
     
-    #TODO
-    print('Not implemented yet')
-    
-    plt.figure()
-    plt.ion()
-    plt.show()
-    plt.imshow(overlaps)
-    plt.draw()
-    plt.pause(0.1)
-    
-    
-    
-    pdb.set_trace()
-    ...
+    # create a mask over which values are included in the interpolation for that bin
+    interp_mask = overlaps.copy()
+    if offset == BinOffset.left:
+        interp_mask[:-1] += overlaps[1:]
+    elif offset == BinOffset.center:
+        interp_mask[:-1] += overlaps[1:]
+        interp_mask[1:] += overlaps[:-1]
+    elif offset == BinOffset.right:
+        interp_mask[1:] += overlaps[:-1]
+    interp_mask = interp_mask > 0
+
+    # compute the distances of each old cell from the new cell (masking those that are too far away)
+    offsets = np.abs(old_coords[:,None] - new_coords[None, :]) * interp_mask
+
+    # invert the offsets so that the closest cell has the largest weight
+    offsets = (offsets.sum(axis=0)[None] - offsets) * interp_mask
+
+    # normalize so that each column has the same sum as the original column
+    offset_sum = offsets.sum(axis=0)
+    offsets[:, offset_sum > 0] /= offset_sum[offset_sum > 0]
+    offsets *= overlaps.sum(axis=0)[None]
+
+    return offsets
 
 
 
@@ -335,17 +350,17 @@ def regrid_1d(
     # - do interpolation for resolution increases
     # - do mean aggregation for resolution decreases
     if aggregation == Aggregation.interp_mean:
-        convert_to_interp_mean_overlaps(overlaps)
+        overlaps = convert_to_interp_mean_overlaps(overlaps, offset, old_coords, new_coords)
         aggregation = Aggregation.mean
 
 
-    # DEBUG: plot the overlap matrix
-    plt.figure()
-    plt.ion()
-    plt.show()
-    plt.imshow(overlaps)
-    plt.draw()
-    plt.pause(0.1)
+    # # DEBUG: plot the overlap matrix
+    # plt.figure()
+    # plt.ion()
+    # plt.show()
+    # plt.imshow(overlaps)
+    # plt.draw()
+    # plt.pause(0.1)
 
     # ensure the dimension being operated on is the last one
     original_dim_idx = data.dims.index(dim)
