@@ -7,7 +7,7 @@ import xarray as xr
 from dynamic_insights import Pipeline, Realization, Scenario, CMIP6Data, OtherData, Threshold, ThresholdType, Model, determine_longitude_convention, convert_longitude_convention, LongitudeConvention
 from matplotlib import pyplot as plt
 from enum import Enum, auto
-from typing import Callable
+from warnings import warn
 import pdb
 
 
@@ -41,7 +41,7 @@ def inplace_set_longitude_convention(data:xr.DataArray, convention:LongitudeConv
 
 
 from cftime import DatetimeNoLeap
-def datetimeNoLeap_to_epoch(dt):
+def datetimeNoLeap_to_epoch(dt) -> float:
     """
     Convert a cftime.DatetimeNoLeap instance to an epoch timestamp.
     """
@@ -52,10 +52,33 @@ def datetimeNoLeap_to_epoch(dt):
     delta = dt - epoch
     
     # Convert the timedelta to seconds
-    seconds = delta.days * 24 * 3600 + delta.seconds
+    seconds = delta.days * 24 * 3600 + delta.seconds + delta.microseconds / 1e6
 
     return seconds
 
+# class ResolutionChange(Enum):
+#     increase = auto()
+#     decrease = auto()
+#     same = auto()
+#     unknown = auto()
+
+# def get_resolution_change(old_coords:np.ndarray, new_coords:np.ndarray) -> ResolutionChange:
+#     """
+#     Determine whether the new coordinates have a higher, lower, or the same resolution as the old coordinates
+#     """
+#     old_deltas = np.diff(old_coords)
+#     new_deltas = np.diff(new_coords)
+#     old_deltas_max, old_deltas_min = old_deltas.max(), old_deltas.min()
+#     new_deltas_max, new_deltas_min = new_deltas.max(), new_deltas.min()
+#     if new_deltas_min > old_deltas_max and new_deltas_max > old_deltas_max:
+#         return ResolutionChange.increase
+#     elif new_deltas_max < old_deltas_min and new_deltas_min < old_deltas_min:
+#         return ResolutionChange.decrease
+#     elif np.allclose(new_deltas, old_deltas):
+#         return ResolutionChange.same
+#     else:
+#         warn(f'Unable to determine resolution change from {old_coords=} to {new_coords=}', RuntimeWarning)
+#         return ResolutionChange.unknown
 
 def main():
     pipe = Pipeline(
@@ -66,30 +89,67 @@ def main():
     pipe.load('pop', OtherData.population)
     pipe.load('land_cover', OtherData.land_cover)
     pipe.load('tasmax', CMIP6Data.tasmax, Model.CAS_ESM2_0)
+    pipe.load('pr', CMIP6Data.pr, Model.FGOALS_f3_L)
+    pipe.load('tas', CMIP6Data.tas, Model.FGOALS_f3_L)
     pipe.execute()
     pop = pipe.get_value('pop').data
     modis = pipe.get_value('land_cover').data
     tasmax = pipe.get_value('tasmax').data
+    pr = pipe.get_value('pr').data
+    tas = pipe.get_value('tas').data
 
 
     #ensure the lon conventions match
     inplace_set_longitude_convention(pop, LongitudeConvention.neg180_180)
     inplace_set_longitude_convention(modis, LongitudeConvention.neg180_180)
     inplace_set_longitude_convention(tasmax, LongitudeConvention.neg180_180)
+    inplace_set_longitude_convention(pr, LongitudeConvention.neg180_180)
+    inplace_set_longitude_convention(tas, LongitudeConvention.neg180_180)
+
+
 
     #convert tasmax to yearly, and then the geo resolution of population
     time_axis = np.array([DatetimeNoLeap(year, 1, 1) for year in range(2015, 2101)])
-    new_tasmax = regrid_1d(tasmax, time_axis, 'time', aggregation=Aggregation.mean)
+    new_tasmax = regrid_1d(tasmax, time_axis, 'time', aggregation=Aggregation.interp_mean)
     new_tasmax = regrid_1d(new_tasmax, pop['lat'].data, 'lat', aggregation=Aggregation.max)
     new_tasmax = regrid_1d(new_tasmax, pop['lon'].data, 'lon', aggregation=Aggregation.max)
     plt.figure()
     plt.imshow(new_tasmax.isel(time=0,ssp=-1, realization=0))
     plt.figure()
-    plt.imshow(tasmax.isel(time=0,ssp=-1, realization=0))
+    plt.imshow(tasmax.isel(time=0,ssp=-1, realization=0), origin='lower')
     plt.show()
+
     pdb.set_trace()
     
-    
+
+    # convert pr to yearly, and then the geo resolution of population
+    time_axis = np.array([DatetimeNoLeap(year, 1, 1) for year in range(2015, 2101)])
+    new_pr = regrid_1d(pr, time_axis, 'time', aggregation=Aggregation.interp_mean)
+    new_pr = regrid_1d(new_pr, pop['lat'].data, 'lat', aggregation=Aggregation.interp_mean)
+    new_pr = regrid_1d(new_pr, pop['lon'].data, 'lon', aggregation=Aggregation.interp_mean)
+    plt.figure()
+    plt.imshow(new_pr.isel(time=0,ssp=-1, realization=0))
+    plt.figure()
+    plt.imshow(pr.isel(time=0,ssp=-1, realization=0), origin='lower')
+    plt.show()
+
+    pdb.set_trace()
+
+
+
+    #convert tas to yearly, and then the geo resolution of population
+    time_axis = np.array([DatetimeNoLeap(year, 1, 1) for year in range(2015, 2101)])
+    new_tas = regrid_1d(tas, time_axis, 'time', aggregation=Aggregation.interp_mean)
+    new_tas = regrid_1d(new_tas, pop['lat'].data, 'lat', aggregation=Aggregation.interp_mean)
+    new_tas = regrid_1d(new_tas, pop['lon'].data, 'lon', aggregation=Aggregation.interp_mean)
+    plt.figure()
+    plt.imshow(new_tas.isel(time=0,ssp=-1, realization=0))
+    plt.figure()
+    plt.imshow(tas.isel(time=0,ssp=-1, realization=0), origin='lower')
+    plt.show()
+
+
+    pdb.set_trace()
     
     #conservatively convert population to the resolution of modis
     new_pop = regrid_1d(pop, modis['lat'].data, 'lat', aggregation=Aggregation.conserve)
@@ -97,18 +157,19 @@ def main():
 
     #plot old vs new population (clip old population to match bounds of new population)
     plt.figure()
-    old_pop = pop.isel(time=0,ssp=-1).sel(lat=slice(modis['lat'].max(), modis['lat'].min()), lon=slice(modis['lon'].min(), modis['lon'].max()))
+    old_pop = pop.isel(time=0,ssp=-1).sel(lat=slice(new_pop['lat'].max(), new_pop['lat'].min()), lon=slice(new_pop['lon'].min(), new_pop['lon'].max()))
     plt.imshow(np.log(old_pop + 1e-6))
     # plt.imshow(old_pop)
 
     plt.figure()
     plt.imshow(np.log(new_pop.isel(time=0,ssp=-1) + 1e-6))
     # plt.imshow(new_pop.isel(time=0,ssp=-1))
+    
+    print(f'comparing pop count: {np.nansum(old_pop)} vs {np.nansum(new_pop.isel(time=0,ssp=-1))}')
 
     plt.show()
     
     pdb.set_trace()
-
 
     #conservatively convert population to the resolution of modis
     new_pop = regrid_1d(pop, tasmax['lat'].data, 'lat', aggregation=Aggregation.conserve)
@@ -116,13 +177,15 @@ def main():
 
     #plot old vs new population (clip old population to match bounds of new population)
     plt.figure()
-    old_pop = pop.isel(time=0,ssp=-1).sel(lat=slice(tasmax['lat'].min(), tasmax['lat'].max(),-1), lon=slice(modis['lon'].min(), modis['lon'].max()))
-    # plt.imshow(np.log(old_pop + 1e-6))
-    plt.imshow(old_pop)
+    old_pop = pop.isel(time=0,ssp=-1).sel(lat=slice(new_pop['lat'].min(), new_pop['lat'].max(),-1), lon=slice(new_pop['lon'].min(), new_pop['lon'].max()))
+    plt.imshow(np.log(old_pop + 1e-6), origin='lower')
+    # plt.imshow(old_pop)
 
     plt.figure()
-    # plt.imshow(np.log(new_pop.isel(time=0,ssp=-1) + 1e-6))
-    plt.imshow(new_pop.isel(time=0,ssp=-1))
+    plt.imshow(np.log(new_pop.isel(time=0,ssp=-1) + 1e-6), origin='lower')
+    # plt.imshow(new_pop.isel(time=0,ssp=-1))
+
+    print(f'comparing pop count: {np.nansum(old_pop)} vs {np.nansum(new_pop.isel(time=0,ssp=-1))}')
 
     plt.show()
 
@@ -143,7 +206,10 @@ class Aggregation(Enum):
     min = auto()
     max = auto()
     mean = auto()
-    #nearest = auto() #TODO: figure out how this would work. probably use a different regridding method entirely
+    median = auto()      #TODO: take the median of each bin
+    mode = auto()        #TODO: take the mode over the bin
+    interp_mean = auto() #TODO: interp if increasing resolution, mean if decreasing resolution
+    nearest = auto()     #TODO: take the centermost item of each bin
 
 
 
@@ -175,7 +241,34 @@ def compute_overlap(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     if b_reversed:
         overlap = overlap[:, ::-1]
     
-    return np.ascontiguousarray(overlap)
+    return np.ascontiguousarray(overlap, dtype=np.float64)
+
+def convert_to_interp_mean_overlaps(overlaps:np.ndarray) -> None:
+    """
+    Convert the overlaps matrix to one that will perform:
+    - interpolation for resolution increases
+    - mean aggregation for resolution decreases
+    """
+
+    if overlaps.shape[0] >= overlaps.shape[1]:
+        # resolution decrease doesn't need any changes
+        return
+
+    
+    #TODO
+    print('Not implemented yet')
+    
+    plt.figure()
+    plt.ion()
+    plt.show()
+    plt.imshow(overlaps)
+    plt.draw()
+    plt.pause(0.1)
+    
+    
+    
+    pdb.set_trace()
+    ...
 
 
 
@@ -188,19 +281,23 @@ def get_bins(coords:np.ndarray, offset:BinOffset) -> np.ndarray:
         offset (BinOffset): Whether the bins should be left, centered, or right of the coordinates
 
     Returns:
-        np.ndarray: The bin edges
+        np.ndarray, np.ndarray: The bin edges, and the deltas between each bin
     """
-    delta = coords[1] - coords[0]
-    print('skipping bin size check since it fails for yearly time coordinates...')
-    # assert np.allclose(np.diff(coords), delta), f'coords must be evenly spaced. Got spacings: {np.diff(coords)}'
-    if offset == BinOffset.left:
-        bins = np.linspace(coords[0] - delta, coords[-1], len(coords) + 1)
-    elif offset == BinOffset.center:
-        bins = np.linspace(coords[0] - delta/2, coords[-1] + delta/2, len(coords) + 1)
-    elif offset == BinOffset.right:
-        bins = np.linspace(coords[0], coords[-1] + delta, len(coords) + 1)
-    return bins
+    deltas = coords[1:] - coords[:-1]
+    if not np.allclose(deltas, deltas[0]):
+        warn(f'coords are not evenly spaced. Got spacings: {np.unique(deltas)}', RuntimeWarning)
 
+    if offset == BinOffset.left:
+        bins = np.concatenate([[coords[0] - deltas[0]], coords])
+    elif offset == BinOffset.center:
+        bins = np.concatenate([[coords[0] - deltas[0]], coords]) + np.concatenate([[deltas[0]], deltas, [deltas[-1]]]) / 2
+    elif offset == BinOffset.right:
+        bins = np.concatenate([coords, [coords[-1] + deltas[-1]]])
+
+    # update the deltas to include the edges
+    deltas = np.diff(bins)
+
+    return bins, deltas
 
 
 
@@ -209,31 +306,38 @@ def regrid_1d(
         new_coords:np.ndarray,
         dim:str,
         offset:BinOffset=BinOffset.left,
-        aggregation=Aggregation.mean,
+        aggregation=Aggregation.interp_mean,
         wrap:tuple[float,float]=None, #TBD format for this...
         try_gpu:bool=True
     ) -> xr.DataArray:
     
+    # grab the old coords and data (copy data so we don't modify the original)
     old_coords = data[dim].data
     old_data = data.data.copy()
 
     # convert time coords to epoch timestamps
     if dim == 'time':
         old_coords = np.array([datetimeNoLeap_to_epoch(time) for time in old_coords])
-        new_coords_timestamps = new_coords.copy()
+        new_coords_copy = new_coords.copy()
         new_coords = np.array([datetimeNoLeap_to_epoch(time) for time in new_coords])
 
     # get the bin boundaries for the old and new data
-    old_bins = get_bins(old_coords, offset)
-    new_bins = get_bins(new_coords, offset)
+    old_bins, old_deltas = get_bins(old_coords, offset)
+    new_bins, _ = get_bins(new_coords, offset)
     
-
     #compute the amount of overlap between each old bin and each new bin
     overlaps = compute_overlap(old_bins, new_bins)
     
-    # normalization....TODO: adjust based on aggregation method
-    old_delta = old_bins[1] - old_bins[0]
-    overlaps /= np.abs(old_delta)
+    # normalization so that overlaps measure the percentage of each old cell that overlaps with the new bins
+    overlaps /= np.abs(old_deltas[:, None])
+
+    # modify the overlaps matrix so that it will:
+    # - do interpolation for resolution increases
+    # - do mean aggregation for resolution decreases
+    if aggregation == Aggregation.interp_mean:
+        convert_to_interp_mean_overlaps(overlaps)
+        aggregation = Aggregation.mean
+
 
     # DEBUG: plot the overlap matrix
     plt.figure()
@@ -270,7 +374,7 @@ def regrid_1d(
 
     #convert time coords back to cftime.DatetimeNoLeap
     if dim == 'time':
-        new_coords = new_coords_timestamps
+        new_coords = new_coords_copy
 
     #convert back to xarray, with the new coords
     result = xr.DataArray(result, coords={**data.coords, dim:new_coords}, dims=data.dims)
@@ -311,6 +415,10 @@ def regrid_1d_conserve_accumulate_cpu(old_data:np.ndarray, overlaps:np.ndarray) 
         ...
     pdb.set_trace()
     ...
+
+# def regrid_1d_interp(data:xr.DataArray, new_coords:np.ndarray, dim:str) -> xr.DataArray:
+#     #TODO: handle when running out of memory
+#     return data.interp({dim: new_coords})
 
 def regrid_1d_general_accumulate_gpu(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Aggregation) -> np.ndarray:
     # if aggregation == Aggregation.conserve:
