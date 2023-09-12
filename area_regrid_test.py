@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import numpy as np
-import torch
-from torch.cuda import OutOfMemoryError
 import xarray as xr
-from dynamic_insights import Pipeline, Realization, Scenario, CMIP6Data, OtherData, Threshold, ThresholdType, Model, determine_longitude_convention, convert_longitude_convention, LongitudeConvention
+from dynamic_insights import Pipeline, Realization, Scenario, CMIP6Data, OtherData, Model, determine_longitude_convention, convert_longitude_convention, LongitudeConvention
 from matplotlib import pyplot as plt
 from enum import Enum, auto
 from warnings import warn
@@ -56,29 +54,6 @@ def datetimeNoLeap_to_epoch(dt) -> float:
 
     return seconds
 
-# class ResolutionChange(Enum):
-#     increase = auto()
-#     decrease = auto()
-#     same = auto()
-#     unknown = auto()
-
-# def get_resolution_change(old_coords:np.ndarray, new_coords:np.ndarray) -> ResolutionChange:
-#     """
-#     Determine whether the new coordinates have a higher, lower, or the same resolution as the old coordinates
-#     """
-#     old_deltas = np.diff(old_coords)
-#     new_deltas = np.diff(new_coords)
-#     old_deltas_max, old_deltas_min = old_deltas.max(), old_deltas.min()
-#     new_deltas_max, new_deltas_min = new_deltas.max(), new_deltas.min()
-#     if new_deltas_min > old_deltas_max and new_deltas_max > old_deltas_max:
-#         return ResolutionChange.increase
-#     elif new_deltas_max < old_deltas_min and new_deltas_min < old_deltas_min:
-#         return ResolutionChange.decrease
-#     elif np.allclose(new_deltas, old_deltas):
-#         return ResolutionChange.same
-#     else:
-#         warn(f'Unable to determine resolution change from {old_coords=} to {new_coords=}', RuntimeWarning)
-#         return ResolutionChange.unknown
 
 def main():
     pipe = Pipeline(
@@ -119,7 +94,6 @@ def main():
     plt.imshow(pr.isel(time=0,ssp=-1, realization=0), origin='lower')
     plt.show()
 
-    pdb.set_trace()
 
 
     #convert tas to yearly, and then the geo resolution of population
@@ -133,7 +107,6 @@ def main():
     plt.imshow(tas.isel(time=0,ssp=-1, realization=0), origin='lower')
     plt.show()
 
-    pdb.set_trace()
 
 
     #convert tasmax to yearly, and then the geo resolution of population
@@ -147,7 +120,6 @@ def main():
     plt.imshow(tasmax.isel(time=0,ssp=-1, realization=0), origin='lower')
     plt.show()
 
-    pdb.set_trace()
     
     #conservatively convert population to the resolution of modis
     new_pop = regrid_1d(pop, modis['lat'].data, 'lat', aggregation=Aggregation.conserve)
@@ -169,7 +141,6 @@ def main():
 
     plt.show()
     
-    pdb.set_trace()
 
     #conservatively convert population to the resolution of modis
     new_pop = regrid_1d(pop, tasmax['lat'].data, 'lat', aggregation=Aggregation.conserve)
@@ -252,15 +223,14 @@ def get_interp_mean_overlaps(overlaps:np.ndarray, offset:BinOffset, old_coords:n
     - mean aggregation for resolution decreases
     """
 
-    # get the index bounds around where values are nonzero
+    # determine if the resolution is increasing or decreasing
     nonzero_indices = np.nonzero(overlaps)
     old_size = nonzero_indices[0].max() - nonzero_indices[0].min()
     new_size = nonzero_indices[1].max() - nonzero_indices[1].min()
     if new_size <= old_size:
-        # resolution decrease just uses plain mean aggregation (i.e. no modification needed)
+        # resolution decrease just uses existing overlaps matrix
         return overlaps
 
-    
     # create a mask over which values are included in the interpolation for that bin
     interp_mask = overlaps.copy()
     if offset == BinOffset.left:
@@ -300,6 +270,7 @@ def get_bins(coords:np.ndarray, offset:BinOffset) -> np.ndarray:
     """
     deltas = coords[1:] - coords[:-1]
     if not np.allclose(deltas, deltas[0]):
+        #This happens for e.g. monthly timestamps where months can have different numbers of days
         warn(f'coords are not evenly spaced. Got spacings: {np.unique(deltas)}', RuntimeWarning)
 
     if offset == BinOffset.left:
@@ -323,7 +294,6 @@ def regrid_1d(
         offset:BinOffset=BinOffset.left,
         aggregation=Aggregation.interp_mean,
         wrap:tuple[float,float]=None, #TBD format for this...
-        try_gpu:bool=True
     ) -> xr.DataArray:
     
     # grab the old coords and data (copy data so we don't modify the original)
@@ -346,21 +316,11 @@ def regrid_1d(
     # normalization so that overlaps measure the percentage of each old cell that overlaps with the new bins
     overlaps /= np.abs(old_deltas[:, None])
 
-    # modify the overlaps matrix so that it will:
-    # - do interpolation for resolution increases
-    # - do mean aggregation for resolution decreases
     if aggregation == Aggregation.interp_mean:
+        # modify the overlaps matrix so that it works for interp_mean
         overlaps = get_interp_mean_overlaps(overlaps, offset, old_coords, new_coords)
         aggregation = Aggregation.mean
-
-
-    # # DEBUG: plot the overlap matrix
-    # plt.figure()
-    # plt.ion()
-    # plt.show()
-    # plt.imshow(overlaps)
-    # plt.draw()
-    # plt.pause(0.1)
+    #TODO: may need to have a similar process for mode...
 
     # ensure the dimension being operated on is the last one
     original_dim_idx = data.dims.index(dim)
@@ -375,13 +335,9 @@ def regrid_1d(
     validmask = ~np.isnan(old_data)
     old_data[~validmask] = 0
 
-    #do the matrix multiplication on the gpu if possible
-    if try_gpu and torch.cuda.is_available():
-        result = regrid_1d_general_accumulate_gpu(old_data, overlaps, aggregation)
-        replace_nans_gpu(result, validmask, overlaps)
-    else:
-        result = regrid_1d_general_accumulate_cpu(old_data, overlaps, aggregation)
-        replace_nans_cpu(result, validmask, overlaps)
+    #perform the regridding on the data, and replace any nans
+    result = regrid_1d_reducer(old_data, overlaps, aggregation)
+    replace_nans(result, validmask, overlaps)
 
     # move the dimension back to its original position
     result = np.moveaxis(result, -1, original_dim_idx)
@@ -394,46 +350,15 @@ def regrid_1d(
     #convert back to xarray, with the new coords
     result = xr.DataArray(result, coords={**data.coords, dim:new_coords}, dims=data.dims)
 
+    print(f'result shape: {result.shape}')
     return result
 
 
-def regrid_1d_conserve_accumulate_gpu(old_data:np.ndarray, overlaps:np.ndarray) -> np.ndarray:
-    try:
-        # move data to the gpu
-        gpu_old_data = torch.tensor(old_data, device='cuda')
-        gpu_overlaps = torch.tensor(overlaps, device='cuda')
-        
-        # do the regridding, and move the result off the gpu to free up memory
-        gpu_result = gpu_old_data @ gpu_overlaps
-        result = gpu_result.cpu().numpy()
-        del gpu_result, gpu_old_data, gpu_overlaps
 
-        return result
-
-        
-    except RuntimeError as e:
-        if 'CUDA out of memory' not in str(e):
-            raise e
-        pdb.set_trace()
-        ...
-    
-    
-    pdb.set_trace()
-    ...
-
-def regrid_1d_conserve_accumulate_cpu(old_data:np.ndarray, overlaps:np.ndarray) -> np.ndarray:
-    try:
-        np.random.random((100000, 100000))
-        return old_data @ overlaps
-    except MemoryError as e:
-        pdb.set_trace()
-        ...
-    pdb.set_trace()
-    ...
-
-
-def regrid_1d_general_accumulate_gpu(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Aggregation) -> np.ndarray:
-    
+def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Aggregation) -> np.ndarray:
+    """
+    Perform the actual regridding reduction over the output bins, according to the aggregation method
+    """
     overlap_mask = overlaps > 0
     cols = np.any(overlap_mask, axis=0)
     starts = overlap_mask.argmax(axis=0)
@@ -504,70 +429,18 @@ def regrid_1d_general_accumulate_gpu(old_data:np.ndarray, overlaps:np.ndarray, a
     else:
         raise NotImplementedError(f'Aggregation method {aggregation} not implemented.')
 
-    print(f'gpu result shape: {result.shape}')
     return result
     
 
-def regrid_1d_general_accumulate_cpu(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Aggregation) -> np.ndarray:
-    if aggregation == Aggregation.conserve:
-        return regrid_1d_conserve_accumulate_cpu(old_data, overlaps)
-    pdb.set_trace()
-    ...
-
-def replace_nans_gpu(result:np.ndarray, validmask:np.ndarray, overlaps:np.ndarray):
-
-    #check if it's even necessary to replace nans
+def replace_nans(result:np.ndarray, validmask:np.ndarray, overlaps:np.ndarray):
     if np.all(validmask):
         return
-    
-    try:
-        # compute the new locations of nans, and move the result off the gpu to free up memory
-        gpu_overlaps = torch.tensor(overlaps, device='cuda')
-        gpu_validmask = torch.tensor(validmask, device='cuda', dtype=torch.float64)
 
-        gpu_nan_accumulation = gpu_validmask @ (gpu_overlaps > 0).to(gpu_validmask.dtype)
-        nan_accumulation = gpu_nan_accumulation.cpu().numpy()
-        del gpu_nan_accumulation, gpu_overlaps, gpu_validmask
-
-        # replace any masked nans with the original nans
-        result[nan_accumulation == 0] = np.nan
-        return
-    
-    except RuntimeError as e:
-        if 'CUDA out of memory' not in str(e):
-            raise e
-        pdb.set_trace()
-        ...
-
-    pdb.set_trace()
-    ...
-
-def replace_nans_cpu(result:np.ndarray, validmask:np.ndarray, overlaps:np.ndarray):
-    if np.all(validmask):
-        return
-    try:
-        nan_accumulation = validmask @ overlaps #TODO: is this correct?
-        result[nan_accumulation == 0] = np.nan
-        return
-    except Exception as e:
-        pdb.set_trace()
-        ...
-    pdb.set_trace()
-    ...
+    #TODO: handling MemoryError when running out of memory
+    nan_accumulation = validmask.astype(np.float32) @ (overlaps > 0).astype(np.float32)
+    result[nan_accumulation == 0] = np.nan
 
 
-# # map from (torch.cuda.is_available(), Aggregation) to aggregator function
-# regrid_gpu_matmul_dispatch: dict[Aggregation, Callable] = {
-#     Aggregation.conserve: regrid_1d_conserve_gpu,
-
-
-# }
-
-# regrid_cpu_matmul_dispatch: dict[Aggregation, Callable] = {
-#     Aggregation.conserve: regrid_1d_conserve_cpu,
-
-
-# }
 
 
 
