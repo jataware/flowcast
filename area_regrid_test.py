@@ -245,7 +245,7 @@ def compute_overlap(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     
     return np.ascontiguousarray(overlap, dtype=np.float64)
 
-def convert_to_interp_mean_overlaps(overlaps:np.ndarray, offset:BinOffset, old_coords:np.ndarray, new_coords:np.ndarray) -> np.ndarray:
+def get_interp_mean_overlaps(overlaps:np.ndarray, offset:BinOffset, old_coords:np.ndarray, new_coords:np.ndarray) -> np.ndarray:
     """
     Convert the overlaps matrix to one that will perform:
     - interpolation for resolution increases
@@ -350,7 +350,7 @@ def regrid_1d(
     # - do interpolation for resolution increases
     # - do mean aggregation for resolution decreases
     if aggregation == Aggregation.interp_mean:
-        overlaps = convert_to_interp_mean_overlaps(overlaps, offset, old_coords, new_coords)
+        overlaps = get_interp_mean_overlaps(overlaps, offset, old_coords, new_coords)
         aggregation = Aggregation.mean
 
 
@@ -431,13 +431,8 @@ def regrid_1d_conserve_accumulate_cpu(old_data:np.ndarray, overlaps:np.ndarray) 
     pdb.set_trace()
     ...
 
-# def regrid_1d_interp(data:xr.DataArray, new_coords:np.ndarray, dim:str) -> xr.DataArray:
-#     #TODO: handle when running out of memory
-#     return data.interp({dim: new_coords})
 
 def regrid_1d_general_accumulate_gpu(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Aggregation) -> np.ndarray:
-    # if aggregation == Aggregation.conserve:
-    #     return regrid_1d_conserve_accumulate_gpu(old_data, overlaps)
     
     overlap_mask = overlaps > 0
     cols = np.any(overlap_mask, axis=0)
@@ -480,8 +475,26 @@ def regrid_1d_general_accumulate_gpu(old_data:np.ndarray, overlaps:np.ndarray, a
     elif aggregation == Aggregation.mean:
         bin_mask = overlaps[col_selector, row_selector]
         binned_data = unmasked_binned_data * bin_mask
-        #TODO: not sure if this is normalized correctly. need to do something with new_delta/old_delta
         result = np.nansum(binned_data, axis=-1) / np.nansum(bin_mask, axis=-1)
+
+    elif aggregation == Aggregation.median:
+        bin_mask = overlap_mask[col_selector, row_selector]
+        binned_data = unmasked_binned_data * bin_mask
+        result = np.nanmedian(binned_data, axis=-1)
+
+    elif aggregation == Aggregation.mode:
+        pdb.set_trace()
+        raise NotImplementedError(f'Aggregation method {aggregation} not implemented.')
+        # bin_mask = overlap_mask[col_selector, row_selector]
+        # binned_data = unmasked_binned_data * bin_mask
+        # result = # np.nanmode isn't a real function...
+
+    elif aggregation == Aggregation.nearest:
+        pdb.set_trace()
+        raise NotImplementedError(f'Aggregation method {aggregation} not implemented.')
+        #TODO: modify overlaps/overlap_mask to just select the centermost item in each bin
+        # bin_mask = overlap_mask[col_selector, row_selector]
+        # binned_data = unmasked_binned_data * bin_mask
 
     elif aggregation == Aggregation.conserve:
         bin_mask = overlaps[col_selector, row_selector]
