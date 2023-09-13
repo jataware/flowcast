@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+from scipy import stats
 import xarray as xr
 from dynamic_insights import Pipeline, Realization, Scenario, CMIP6Data, OtherData, Model, determine_longitude_convention, convert_longitude_convention, LongitudeConvention
 from matplotlib import pyplot as plt
@@ -82,6 +83,16 @@ def main():
     inplace_set_longitude_convention(tas, LongitudeConvention.neg180_180)
 
     
+    # convert modis to the goe resolution of tasmax
+    new_modis = regrid_1d(modis, tasmax['lat'].data, 'lat', aggregation=Aggregation.mode)
+    new_modis = regrid_1d(new_modis, tasmax['lon'].data, 'lon', aggregation=Aggregation.mode)
+    plt.figure()
+    new_modis.plot()
+    plt.figure()
+    modis.plot()
+    plt.show()
+
+
 
     # convert pr to yearly, and then the geo resolution of population
     time_axis = np.array([DatetimeNoLeap(year, 1, 1) for year in range(2015, 2101)])
@@ -89,9 +100,9 @@ def main():
     new_pr = regrid_1d(new_pr, pop['lat'].data, 'lat', aggregation=Aggregation.interp_mean)
     new_pr = regrid_1d(new_pr, pop['lon'].data, 'lon', aggregation=Aggregation.interp_mean)
     plt.figure()
-    plt.imshow(new_pr.isel(time=0,ssp=-1, realization=0))
+    new_pr.isel(time=0,ssp=-1, realization=0).plot()
     plt.figure()
-    plt.imshow(pr.isel(time=0,ssp=-1, realization=0), origin='lower')
+    pr.isel(time=0,ssp=-1, realization=0).plot()
     plt.show()
 
 
@@ -102,9 +113,9 @@ def main():
     new_tas = regrid_1d(new_tas, pop['lat'].data, 'lat', aggregation=Aggregation.interp_mean)
     new_tas = regrid_1d(new_tas, pop['lon'].data, 'lon', aggregation=Aggregation.interp_mean)
     plt.figure()
-    plt.imshow(new_tas.isel(time=0,ssp=-1, realization=0))
+    new_tas.isel(time=0,ssp=-1, realization=0).plot()
     plt.figure()
-    plt.imshow(tas.isel(time=0,ssp=-1, realization=0), origin='lower')
+    tas.isel(time=0,ssp=-1, realization=0).plot()
     plt.show()
 
 
@@ -115,9 +126,9 @@ def main():
     new_tasmax = regrid_1d(new_tasmax, pop['lat'].data, 'lat', aggregation=Aggregation.max)
     new_tasmax = regrid_1d(new_tasmax, pop['lon'].data, 'lon', aggregation=Aggregation.max)
     plt.figure()
-    plt.imshow(new_tasmax.isel(time=0,ssp=-1, realization=0))
+    new_tasmax.isel(time=0,ssp=-1, realization=0).plot()
     plt.figure()
-    plt.imshow(tasmax.isel(time=0,ssp=-1, realization=0), origin='lower')
+    tasmax.isel(time=0,ssp=-1, realization=0).plot()
     plt.show()
 
     
@@ -325,12 +336,11 @@ def regrid_1d(
     # normalization so that overlaps measure the percentage of each old cell that overlaps with the new bins
     overlaps /= np.abs(old_deltas[:, None])
 
-    # any pre-processing done to overlaps for specific aggregation methods
+    # handle aggregation methods that use a modified overlaps matrix
     if aggregation == Aggregation.interp_mean:
         overlaps = get_interp_mean_overlaps(overlaps, old_coords, new_coords)
     elif aggregation == Aggregation.nearest:
         overlaps = get_nearest_overlaps(old_coords, new_coords)
-
 
     # ensure the dimension being operated on is the last one
     original_dim_idx = data.dims.index(dim)
@@ -344,6 +354,10 @@ def regrid_1d(
     #set any data that is nan to 0, and keep track of where the nans were
     validmask = ~np.isnan(old_data)
     old_data[~validmask] = 0
+
+    # hacky way to deal with nans not propagating correctly under mode aggregation
+    if aggregation == Aggregation.mode:
+        old_data[~validmask] = float('-inf')
 
     #perform the regridding on the data, and replace any nans
     result = regrid_1d_reducer(old_data, overlaps, aggregation)
@@ -418,11 +432,9 @@ def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Aggr
         result = np.nanmedian(binned_data, axis=-1)
 
     elif aggregation == Aggregation.mode:
-        pdb.set_trace()
-        raise NotImplementedError(f'Aggregation method {aggregation} not implemented.')
-        # bin_mask = overlap_mask[col_selector, row_selector]
-        # binned_data = unmasked_binned_data * bin_mask
-        # result = # np.nanmode isn't a real function...
+        bin_mask = overlap_mask[col_selector, row_selector]
+        binned_data = unmasked_binned_data * bin_mask
+        result = stats.mode(binned_data, axis=-1, nan_policy='omit', keepdims=False)[0]
 
     elif aggregation == Aggregation.nearest:
         bin_mask = overlap_mask[col_selector, row_selector]
