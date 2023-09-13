@@ -179,10 +179,10 @@ class Aggregation(Enum):
     min = auto()
     max = auto()
     mean = auto()
-    median = auto()      #TODO: take the median of each bin
+    median = auto()
     mode = auto()        #TODO: take the mode over the bin
-    interp_mean = auto() #TODO: interp if increasing resolution, mean if decreasing resolution
-    nearest = auto()     #TODO: take the centermost item of each bin
+    interp_mean = auto() # interp if increasing resolution, mean if decreasing resolution
+    nearest = auto()
 
 
 
@@ -249,7 +249,21 @@ def get_interp_mean_overlaps(overlaps:np.ndarray, old_coords:np.ndarray, new_coo
 
     return distances
 
+def get_nearest_overlaps(old_coords:np.ndarray, new_coords:np.ndarray) -> np.ndarray:
+    """
+    Get an overlaps matrix that just selects the item nearest to the location of the new bin
+    """
+    # compute the distances from each old cell to each new cell
+    distances = np.abs(old_coords[:, None] - new_coords[None, :])
 
+    #zero out everything except for the closest cell in each column
+    distance_ranks = np.argsort(distances, axis=0)
+    distances[distance_ranks[1:], np.arange(distances.shape[1])] = 0
+
+    # set all nonzero values to 1
+    distances[distances > 0] = 1
+
+    return distances
 
 
 def get_bins(coords:np.ndarray, offset:BinOffset) -> np.ndarray:
@@ -311,11 +325,12 @@ def regrid_1d(
     # normalization so that overlaps measure the percentage of each old cell that overlaps with the new bins
     overlaps /= np.abs(old_deltas[:, None])
 
+    # any pre-processing done to overlaps for specific aggregation methods
     if aggregation == Aggregation.interp_mean:
-        # modify the overlaps matrix so that it works for interp_mean
         overlaps = get_interp_mean_overlaps(overlaps, old_coords, new_coords)
-        aggregation = Aggregation.mean
-    #TODO: may need to have a similar process for mode...
+    elif aggregation == Aggregation.nearest:
+        overlaps = get_nearest_overlaps(old_coords, new_coords)
+
 
     # ensure the dimension being operated on is the last one
     original_dim_idx = data.dims.index(dim)
@@ -331,7 +346,7 @@ def regrid_1d(
     old_data[~validmask] = 0
 
     #perform the regridding on the data, and replace any nans
-    result = regrid_1d_reducer(old_data, overlaps, aggregation, old_coords, new_coords)
+    result = regrid_1d_reducer(old_data, overlaps, aggregation)
     replace_nans(result, validmask, overlaps)
 
     # move the dimension back to its original position
@@ -350,7 +365,7 @@ def regrid_1d(
 
 
 
-def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Aggregation, old_coords:np.ndarray, new_coords:np.ndarray) -> np.ndarray:
+def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Aggregation) -> np.ndarray:
     """
     Perform the actual regridding reduction over the output bins, according to the aggregation method
     """
@@ -392,7 +407,7 @@ def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Aggr
         binned_data = unmasked_binned_data * bin_mask
         result = np.nanmax(binned_data, axis=-1)
 
-    elif aggregation == Aggregation.mean:
+    elif aggregation == Aggregation.mean or aggregation == Aggregation.interp_mean:
         bin_mask = overlaps[col_selector, row_selector]
         binned_data = unmasked_binned_data * bin_mask
         result = np.nansum(binned_data, axis=-1) / np.nansum(bin_mask, axis=-1)
@@ -410,11 +425,9 @@ def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Aggr
         # result = # np.nanmode isn't a real function...
 
     elif aggregation == Aggregation.nearest:
-        pdb.set_trace()
-        raise NotImplementedError(f'Aggregation method {aggregation} not implemented.')
-        #TODO: modify overlaps/overlap_mask to just select the centermost item in each bin
-        # bin_mask = overlap_mask[col_selector, row_selector]
-        # binned_data = unmasked_binned_data * bin_mask
+        bin_mask = overlap_mask[col_selector, row_selector]
+        binned_data = unmasked_binned_data * bin_mask
+        result = binned_data[..., 0] # select the only value in each bin
 
     elif aggregation == Aggregation.conserve:
         bin_mask = overlaps[col_selector, row_selector]
