@@ -8,7 +8,7 @@ from warnings import warn
 from spacetime import datetimeNoLeap_to_epoch
 
 
-
+import pdb
 
 
 class BinOffset(Enum):
@@ -16,7 +16,7 @@ class BinOffset(Enum):
     # center = auto()  #TODO: for now don't use this
     # right = auto()   #TODO: for now don't use this
 
-class Aggregation(Enum):
+class RegridType(Enum):
     conserve = auto()
     min = auto()
     max = auto()
@@ -143,7 +143,7 @@ def regrid_1d(
         new_coords:np.ndarray,
         dim:str,
         offset:BinOffset=BinOffset.left,
-        aggregation=Aggregation.interp_mean,
+        aggregation=RegridType.interp_mean,
         wrap:tuple[float,float]=None, #TBD format for this...
     ) -> xr.DataArray:
     
@@ -168,9 +168,9 @@ def regrid_1d(
     overlaps /= np.abs(old_deltas[:, None])
 
     # handle aggregation methods that use a modified overlaps matrix
-    if aggregation == Aggregation.interp_mean:
+    if aggregation == RegridType.interp_mean:
         overlaps = get_interp_mean_overlaps(overlaps, old_coords, new_coords)
-    elif aggregation == Aggregation.nearest:
+    elif aggregation == RegridType.nearest:
         overlaps = get_nearest_overlaps(old_coords, new_coords)
 
     # ensure the dimension being operated on is the last one
@@ -187,7 +187,7 @@ def regrid_1d(
     old_data[~validmask] = 0
 
     # hacky way to deal with nans not propagating correctly under mode aggregation
-    if aggregation == Aggregation.mode:
+    if aggregation == RegridType.mode:
         old_data[~validmask] = float('-inf')
 
     #perform the regridding on the data, and replace any nans
@@ -205,12 +205,11 @@ def regrid_1d(
     #convert back to xarray, with the new coords
     result = xr.DataArray(result, coords={**data.coords, dim:new_coords}, dims=data.dims)
 
-    print(f'result shape: {result.shape}')
     return result
 
 
 
-def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Aggregation) -> np.ndarray:
+def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:RegridType) -> np.ndarray:
     """
     Perform the actual regridding reduction over the output bins, according to the aggregation method
     """
@@ -242,43 +241,43 @@ def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Aggr
     unmasked_binned_data = old_data[..., col_selector]
     
     # perform reduction over bins according to aggregation method
-    if aggregation == Aggregation.min:
+    if aggregation == RegridType.min:
         bin_mask = overlap_mask[col_selector, row_selector]
         binned_data = unmasked_binned_data * bin_mask
         result = np.nanmin(binned_data, axis=-1)
 
-    elif aggregation == Aggregation.max:
+    elif aggregation == RegridType.max:
         bin_mask = overlap_mask[col_selector, row_selector]
         binned_data = unmasked_binned_data * bin_mask
         result = np.nanmax(binned_data, axis=-1)
 
-    elif aggregation == Aggregation.mean or aggregation == Aggregation.interp_mean:
+    elif aggregation == RegridType.mean or aggregation == RegridType.interp_mean:
         bin_mask = overlaps[col_selector, row_selector]
         binned_data = unmasked_binned_data * bin_mask
         result = np.nansum(binned_data, axis=-1) / np.nansum(bin_mask, axis=-1)
 
-    elif aggregation == Aggregation.median:
+    elif aggregation == RegridType.median:
         bin_mask = overlap_mask[col_selector, row_selector]
         binned_data = unmasked_binned_data * bin_mask
         result = np.nanmedian(binned_data, axis=-1)
 
-    elif aggregation == Aggregation.mode:
+    elif aggregation == RegridType.mode:
         bin_mask = overlap_mask[col_selector, row_selector]
         binned_data = unmasked_binned_data * bin_mask
         result = stats.mode(binned_data, axis=-1, nan_policy='omit', keepdims=False)[0]
 
-    elif aggregation == Aggregation.nearest:
+    elif aggregation == RegridType.nearest:
         bin_mask = overlap_mask[col_selector, row_selector]
         binned_data = unmasked_binned_data * bin_mask
         result = binned_data[..., 0] # select the only value in each bin
 
-    elif aggregation == Aggregation.conserve:
+    elif aggregation == RegridType.conserve:
         bin_mask = overlaps[col_selector, row_selector]
         binned_data = unmasked_binned_data * bin_mask
         result = np.nansum(binned_data, axis=-1)
 
     else:
-        raise NotImplementedError(f'Aggregation method {aggregation} not implemented.')
+        raise NotImplementedError(f'Regrid aggregation method {aggregation} not implemented.')
 
     return result
     

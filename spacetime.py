@@ -1,7 +1,19 @@
+from __future__ import annotations
+
+from enum import Enum, auto
+import numpy as np
+import xarray as xr
+from dataclasses import dataclass
+from cftime import DatetimeNoLeap
+
 
 
 ############################### TIME FUNCTIONS ################################
-from cftime import DatetimeNoLeap
+
+class Frequency(Enum):
+    monthly = auto()
+    yearly = auto()
+    decadal = auto()
 
 
 def datetimeNoLeap_to_epoch(dt) -> float:
@@ -21,9 +33,7 @@ def datetimeNoLeap_to_epoch(dt) -> float:
 
 
 ############################### SPACE/GEO FUNCTIONS ################################
-from enum import Enum, auto
-import numpy as np
-import xarray as xr
+
 
 
 class LongitudeConvention(Enum):
@@ -36,6 +46,17 @@ class LongitudeConvention(Enum):
 
 
 #TODO: consider having a latitude convention
+
+
+@dataclass
+class Resolution:
+    dx: float
+    dy: float = None
+
+    def __init__(self, dx: float, dy: float|None=None):
+        self.dx = dx
+        self.dy = dy if dy is not None else dx
+
 
 def validate_longitudes(lons:np.ndarray):
     """Validate that the given longitude values are in the range [-180, 360] and are monotonic (either positive or negative)"""
