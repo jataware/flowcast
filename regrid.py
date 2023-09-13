@@ -1,118 +1,292 @@
+from __future__ import annotations
+
+from enum import Enum, auto
+import numpy as np
+from scipy import stats
 import xarray as xr
-
-from cdo import * 
-import os
-os.environ['HDF5_DISABLE_VERSION_CHECK'] = "1"
-
-cdo = Cdo()
-cdo.debug = False
-
-from enum import Enum
+from warnings import warn
+from spacetime import datetimeNoLeap_to_epoch
 
 
 
 
-class RegridMethod(Enum):
-    SUM = ('remapsum', cdo.remapsum, 'Sum remapping, suitable for fields where the total quantity should be conserved (e.g., mass, population, water fluxes)')
-    MINIMUM = ('remapmin', cdo.remapmin, 'Minimum remapping, suitable for fields where you want to preserve the minimum value within an area (e.g., minimum temperature, lowest pressure)')
-    MAXIMUM = ('remapmax', cdo.remapmax, 'Maximum remapping, suitable for fields where you want to preserve the maximum value within an area (e.g., peak wind speeds, maximum temperature)')
-    MEDIAN = ('remapmedian', cdo.remapmedian, 'Median remapping, suitable for fields where you want to preserve the central tendency of the data, while being less sensitive to extreme values (e.g., median income, median precipitation)')
-    AVERAGE = ('remapavg', cdo.remapavg, 'Average remapping, suitable for fields representing average quantities (e.g., temperature, humidity, wind speed)')
-    BILINEAR = ('remapbil', cdo.remapbil, 'Bilinear interpolation, suitable for smooth fields (e.g., temperature, pressure, geopotential height)')
-    BICUBIC = ('remapbic', cdo.remapbic, 'Bicubic interpolation, suitable for smooth fields with higher-order accuracy (e.g., temperature, pressure, geopotential height)')
-    CONSERVATIVE = ('remapcon', cdo.remapcon, 'First-order conservative remapping. See: https://journals.ametsoc.org/view/journals/mwre/127/9/1520-0493_1999_127_2204_fasocr_2.0.co_2.xml')
-    CONSERVATIVE2 = ('remapcon2', cdo.remapcon2, 'Second-order conservative remapping. See: https://journals.ametsoc.org/view/journals/mwre/127/9/1520-0493_1999_127_2204_fasocr_2.0.co_2.xml')
-    NEAREST_NEIGHBOR = ('remapnn', cdo.remapnn, 'Nearest neighbor remapping, suitable for categorical data (e.g., land use types, biome type, election area winners)')
 
-    def __init__(self, method_name, cdo_function, description):
-        self.method_name = method_name
-        self.cdo_function = cdo_function
-        self.description = description
+class BinOffset(Enum):
+    left = auto()
+    # center = auto()  #TODO: for now don't use this
+    # right = auto()   #TODO: for now don't use this
 
-    def __str__(self):
-        return f'<RegridMethod.{self.name}>'
+class Aggregation(Enum):
+    conserve = auto()
+    min = auto()
+    max = auto()
+    mean = auto()
+    median = auto()
+    mode = auto()
+    interp_mean = auto() # interp if increasing resolution, mean if decreasing resolution
+    nearest = auto()
+
+
+
+
+def compute_overlap(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """
+    Given two arrays of bin edges, compute the amount of overlap between each bin in a and each bin in b
+
+    Parameters:
+        a (np.ndarray): The first array of bin edges
+        b (np.ndarray): The second array of bin edges
+
+    Returns:
+        np.ndarray: A matrix of shape (len(a), len(b)) where each element is the proportion overlap between the corresponding bins in a and b
+    """
+    # Guarantee that a and b are in ascending order
+    if (a_reversed := a[1] < a[0]):
+        a = a[::-1]
+    if (b_reversed := b[1] < b[0]):
+        b = b[::-1]
+
+    # Calculate overlap using ascending logic since they're both in the same order now
+    a = a[:, None]
+    overlap = np.maximum(0, np.minimum(a[1:], b[1:]) - np.maximum(a[:-1], b[:-1]))
     
-    def __repr__(self):
-        return f'<RegridMethod.{self.name}>'
-
-
-from dataclasses import dataclass
-
-@dataclass
-class Resolution:
-    dx: float
-    dy: float = None
-
-    def __init__(self, dx: float, dy: float|None=None):
-        self.dx = dx
-        self.dy = dy if dy is not None else dx
-
-
-def regrid(data: xr.Dataset, resolution: float|Resolution, method: RegridMethod) -> xr.Dataset:
-    """
-    Regrids the data to the target resolution using the specified aggregation method.
-    """
-    data.to_netcdf('tmp_data.nc')
-    create_target_grid(resolution) # creates tmp_gridfile.txt
-
-    regridded_data = method.cdo_function('tmp_gridfile.txt', input='tmp_data.nc', options='-f nc', returnXDataset=True)
-
-    #clip the regridded data to the maximum extent of the original data
-    regridded_data = regridded_data.rio.write_crs(4326)
-    regridded_data = regridded_data.rio.clip_box(*data.rio.bounds())
-
-    # Clean up temporary files
-    os.remove('tmp_data.nc')
-    os.remove('tmp_gridfile.txt')
-
-    return regridded_data
-
-
-def create_target_grid(resolution: float|Resolution) -> None:
-    """
-    Creates a target grid with the specified resolution, and saves to tmp_gridfile.txt
-    """
-
-    if not isinstance(resolution, Resolution):
-        resolution = Resolution(resolution)
-
-    # create a grid file
-    content = f"""
-gridtype  = latlon
-xsize     = {int(360/resolution.dx)}
-ysize     = {int(180/resolution.dy)}
-xfirst    = {-180 + resolution.dx / 2}
-xinc      = {resolution.dx}
-yfirst    = {-90 + resolution.dy / 2}
-yinc      = {resolution.dy}
-"""
-    gridfile = 'tmp_gridfile.txt'
-    with open(gridfile, 'w') as f:
-        f.write(content)
-
-def multi_feature_regrid(data: xr.Dataset, resolution: float|Resolution, methods: dict[str, RegridMethod]) -> xr.Dataset:
-    """
-    Regrids data with multiple features using specified aggregation methods per each feature.
-    """
-
-    # collect all features that use the same aggregation method
-    features_by_method = {}
-    for feature, method in methods.items():
-        if method not in features_by_method:
-            features_by_method[method] = []
-        features_by_method[method].append(feature)
+    # Reverse the overlap matrix back so indices match the original arrays
+    if a_reversed:
+        overlap = overlap[::-1]
+    if b_reversed:
+        overlap = overlap[:, ::-1]
     
-    # regrid each group of features using the specified aggregation method    
-    results = [regrid(data[features], resolution, method) for method, features in features_by_method.items()]
+    return np.ascontiguousarray(overlap, dtype=np.float64)
 
-    # merge the results and return
-    return xr.merge(results)
-
-
-def get_resolution(data: xr.Dataset) -> Resolution:
+def get_interp_mean_overlaps(overlaps:np.ndarray, old_coords:np.ndarray, new_coords:np.ndarray) -> np.ndarray:
     """
-    Returns the resolution of the data in degrees.
+    Convert the overlaps matrix to one that will perform:
+    - interpolation for resolution increases
+    - mean aggregation for resolution decreases
     """
-    dx = abs(data.lon[1] - data.lon[0]).item()
-    dy = abs(data.lat[1] - data.lat[0]).item()
-    return Resolution(dx, dy)
+
+    # determine if the resolution is increasing or decreasing
+    nonzero_indices = np.nonzero(overlaps)
+    old_size = nonzero_indices[0].max() - nonzero_indices[0].min()
+    new_size = nonzero_indices[1].max() - nonzero_indices[1].min()
+    if new_size <= old_size:
+        # resolution decrease just uses existing overlaps matrix
+        return overlaps
+
+    # compute the distances from each old cell to each new cell
+    distances = np.abs(old_coords[:, None] - new_coords[None, :])
+
+    #zero out everything except for the closest two cells in each column
+    distance_ranks = np.argsort(distances, axis=0)#[:2]
+    distances[distance_ranks[2:], np.arange(distances.shape[1])] = 0
+
+    #invert the distances so the closest cell has the largest weight
+    mask = distances > 0
+    distances = (distances.sum(axis=0)[None] - distances) * mask
+
+
+    # normalize so that each column sums up to 1
+    distances_sum = distances.sum(axis=0)
+    distances[:, distances_sum > 0] /= distances_sum[distances_sum > 0]
+
+    return distances
+
+def get_nearest_overlaps(old_coords:np.ndarray, new_coords:np.ndarray) -> np.ndarray:
+    """
+    Get an overlaps matrix that just selects the item nearest to the location of the new bin
+    """
+    # compute the distances from each old cell to each new cell
+    distances = np.abs(old_coords[:, None] - new_coords[None, :])
+
+    #zero out everything except for the closest cell in each column
+    distance_ranks = np.argsort(distances, axis=0)
+    distances[distance_ranks[1:], np.arange(distances.shape[1])] = 0
+
+    # set all nonzero values to 1
+    distances[distances > 0] = 1
+
+    return distances
+
+
+def get_bins(coords:np.ndarray, offset:BinOffset) -> np.ndarray:
+    """
+    Given an array of evenly spaced coordinates, return the bin edges
+
+    Parameters:
+        coords (np.ndarray): The array of evenly spaced coordinates
+        offset (BinOffset): Whether the bins should be left, centered, or right of the coordinates
+
+    Returns:
+        np.ndarray, np.ndarray: The bin edges, and the deltas between each bin
+    """
+    deltas = coords[1:] - coords[:-1]
+    if not np.allclose(deltas, deltas[0]):
+        #This happens for e.g. monthly timestamps where months can have different numbers of days
+        warn(f'coords are not evenly spaced. Got spacings: {np.unique(deltas)}', RuntimeWarning)
+
+    if offset == BinOffset.left:
+        bins = np.concatenate([[coords[0] - deltas[0]], coords])
+    elif offset == BinOffset.center:
+        bins = np.concatenate([[coords[0] - deltas[0]], coords]) + np.concatenate([[deltas[0]], deltas, [deltas[-1]]]) / 2
+    elif offset == BinOffset.right:
+        bins = np.concatenate([coords, [coords[-1] + deltas[-1]]])
+
+    # update the deltas to include the edges
+    deltas = np.diff(bins)
+
+    return bins, deltas
+
+
+
+def regrid_1d(
+        data:xr.DataArray,
+        new_coords:np.ndarray,
+        dim:str,
+        offset:BinOffset=BinOffset.left,
+        aggregation=Aggregation.interp_mean,
+        wrap:tuple[float,float]=None, #TBD format for this...
+    ) -> xr.DataArray:
+    
+    # grab the old coords and data (copy data so we don't modify the original)
+    old_coords = data[dim].data
+    old_data = data.data.copy()
+
+    # convert time coords to epoch timestamps
+    if dim == 'time':
+        old_coords = np.array([datetimeNoLeap_to_epoch(time) for time in old_coords])
+        new_coords_copy = new_coords.copy()
+        new_coords = np.array([datetimeNoLeap_to_epoch(time) for time in new_coords])
+
+    # get the bin boundaries for the old and new data
+    old_bins, old_deltas = get_bins(old_coords, offset)
+    new_bins, _ = get_bins(new_coords, offset)
+    
+    #compute the amount of overlap between each old bin and each new bin
+    overlaps = compute_overlap(old_bins, new_bins)
+    
+    # normalization so that overlaps measure the percentage of each old cell that overlaps with the new bins
+    overlaps /= np.abs(old_deltas[:, None])
+
+    # handle aggregation methods that use a modified overlaps matrix
+    if aggregation == Aggregation.interp_mean:
+        overlaps = get_interp_mean_overlaps(overlaps, old_coords, new_coords)
+    elif aggregation == Aggregation.nearest:
+        overlaps = get_nearest_overlaps(old_coords, new_coords)
+
+    # ensure the dimension being operated on is the last one
+    original_dim_idx = data.dims.index(dim)
+    if original_dim_idx != len(data.dims) - 1:
+        old_data = np.moveaxis(old_data, original_dim_idx, -1)
+
+    #ensure the data is contiguous in memory
+    old_data = np.ascontiguousarray(old_data)
+    overlaps = np.ascontiguousarray(overlaps)
+
+    #set any data that is nan to 0, and keep track of where the nans were
+    validmask = ~np.isnan(old_data)
+    old_data[~validmask] = 0
+
+    # hacky way to deal with nans not propagating correctly under mode aggregation
+    if aggregation == Aggregation.mode:
+        old_data[~validmask] = float('-inf')
+
+    #perform the regridding on the data, and replace any nans
+    result = regrid_1d_reducer(old_data, overlaps, aggregation)
+    replace_nans(result, validmask, overlaps)
+
+    # move the dimension back to its original position
+    result = np.moveaxis(result, -1, original_dim_idx)
+    result = np.ascontiguousarray(result)
+
+    #convert time coords back to cftime.DatetimeNoLeap
+    if dim == 'time':
+        new_coords = new_coords_copy
+
+    #convert back to xarray, with the new coords
+    result = xr.DataArray(result, coords={**data.coords, dim:new_coords}, dims=data.dims)
+
+    print(f'result shape: {result.shape}')
+    return result
+
+
+
+def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Aggregation) -> np.ndarray:
+    """
+    Perform the actual regridding reduction over the output bins, according to the aggregation method
+    """
+    overlap_mask = overlaps > 0
+    cols = np.any(overlap_mask, axis=0)
+    starts = overlap_mask.argmax(axis=0)
+    ends = overlap_mask.shape[0] - (overlap_mask[::-1]).argmax(axis=0)
+
+    #determine the length of the longest column
+    max_col_length = np.max(ends[cols] - starts[cols])
+
+    #set the starts and ends of the empty columns to 0:max_col_length
+    starts[~cols] = 0
+    ends[~cols] = max_col_length
+
+    #extend all columns so that they are of length max_col_length
+    ends[cols] = (starts[cols] + max_col_length).clip(max=overlap_mask.shape[0])
+    starts[cols] = (ends[cols] - max_col_length).clip(min=0)
+
+    #convert overlaps/overlap_mask so that unselected locations are nan
+    overlaps[~overlap_mask] = np.nan
+    overlap_mask[~overlap_mask] = np.nan
+
+    # set up selectors for the indices of each bin to aggregate over
+    col_selector = np.arange(max_col_length) + starts[:, None]
+    row_selector = np.arange(overlap_mask.shape[1])[:, None]
+
+    #construct a matrix holding all the input values for each bin in the output
+    unmasked_binned_data = old_data[..., col_selector]
+    
+    # perform reduction over bins according to aggregation method
+    if aggregation == Aggregation.min:
+        bin_mask = overlap_mask[col_selector, row_selector]
+        binned_data = unmasked_binned_data * bin_mask
+        result = np.nanmin(binned_data, axis=-1)
+
+    elif aggregation == Aggregation.max:
+        bin_mask = overlap_mask[col_selector, row_selector]
+        binned_data = unmasked_binned_data * bin_mask
+        result = np.nanmax(binned_data, axis=-1)
+
+    elif aggregation == Aggregation.mean or aggregation == Aggregation.interp_mean:
+        bin_mask = overlaps[col_selector, row_selector]
+        binned_data = unmasked_binned_data * bin_mask
+        result = np.nansum(binned_data, axis=-1) / np.nansum(bin_mask, axis=-1)
+
+    elif aggregation == Aggregation.median:
+        bin_mask = overlap_mask[col_selector, row_selector]
+        binned_data = unmasked_binned_data * bin_mask
+        result = np.nanmedian(binned_data, axis=-1)
+
+    elif aggregation == Aggregation.mode:
+        bin_mask = overlap_mask[col_selector, row_selector]
+        binned_data = unmasked_binned_data * bin_mask
+        result = stats.mode(binned_data, axis=-1, nan_policy='omit', keepdims=False)[0]
+
+    elif aggregation == Aggregation.nearest:
+        bin_mask = overlap_mask[col_selector, row_selector]
+        binned_data = unmasked_binned_data * bin_mask
+        result = binned_data[..., 0] # select the only value in each bin
+
+    elif aggregation == Aggregation.conserve:
+        bin_mask = overlaps[col_selector, row_selector]
+        binned_data = unmasked_binned_data * bin_mask
+        result = np.nansum(binned_data, axis=-1)
+
+    else:
+        raise NotImplementedError(f'Aggregation method {aggregation} not implemented.')
+
+    return result
+    
+
+def replace_nans(result:np.ndarray, validmask:np.ndarray, overlaps:np.ndarray):
+    if np.all(validmask):
+        return
+
+    #TODO: handling MemoryError when running out of memory
+    nan_accumulation = validmask.astype(np.float32) @ (overlaps > 0).astype(np.float32)
+    result[nan_accumulation == 0] = np.nan
