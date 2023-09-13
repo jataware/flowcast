@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 from dynamic_insights import Pipeline, Realization, Scenario, CMIP6Data, OtherData, Model
 from spacetime import DatetimeNoLeap, LongitudeConvention, inplace_set_longitude_convention
-from regrid import regrid_1d, Aggregation
+from regrid import regrid_1d, RegridType
 from matplotlib import pyplot as plt
 import pdb
 
@@ -37,8 +37,8 @@ def main():
 
     
     # convert modis to the goe resolution of tasmax
-    new_modis = regrid_1d(modis, tasmax['lat'].data, 'lat', aggregation=Aggregation.mode)
-    new_modis = regrid_1d(new_modis, tasmax['lon'].data, 'lon', aggregation=Aggregation.mode)
+    new_modis = regrid_1d(modis, tasmax['lat'].data, 'lat', aggregation=RegridType.mode)
+    new_modis = regrid_1d(new_modis, tasmax['lon'].data, 'lon', aggregation=RegridType.mode)
     plt.figure()
     new_modis.plot()
     plt.figure()
@@ -49,9 +49,9 @@ def main():
 
     # convert pr to yearly, and then the geo resolution of population
     time_axis = np.array([DatetimeNoLeap(year, 1, 1) for year in range(2015, 2101)])
-    new_pr = regrid_1d(pr, time_axis, 'time', aggregation=Aggregation.interp_mean)
-    new_pr = regrid_1d(new_pr, pop['lat'].data, 'lat', aggregation=Aggregation.interp_mean)
-    new_pr = regrid_1d(new_pr, pop['lon'].data, 'lon', aggregation=Aggregation.interp_mean)
+    new_pr = regrid_1d(pr, time_axis, 'time', aggregation=RegridType.interp_mean)
+    new_pr = regrid_1d(new_pr, pop['lat'].data, 'lat', aggregation=RegridType.interp_mean)
+    new_pr = regrid_1d(new_pr, pop['lon'].data, 'lon', aggregation=RegridType.interp_mean)
     plt.figure()
     new_pr.isel(time=0,ssp=-1, realization=0).plot()
     plt.figure()
@@ -62,9 +62,9 @@ def main():
 
     #convert tas to yearly, and then the geo resolution of population
     time_axis = np.array([DatetimeNoLeap(year, 1, 1) for year in range(2015, 2101)])
-    new_tas = regrid_1d(tas, time_axis, 'time', aggregation=Aggregation.interp_mean)
-    new_tas = regrid_1d(new_tas, pop['lat'].data, 'lat', aggregation=Aggregation.interp_mean)
-    new_tas = regrid_1d(new_tas, pop['lon'].data, 'lon', aggregation=Aggregation.interp_mean)
+    new_tas = regrid_1d(tas, time_axis, 'time', aggregation=RegridType.interp_mean)
+    new_tas = regrid_1d(new_tas, pop['lat'].data, 'lat', aggregation=RegridType.interp_mean)
+    new_tas = regrid_1d(new_tas, pop['lon'].data, 'lon', aggregation=RegridType.interp_mean)
     plt.figure()
     new_tas.isel(time=0,ssp=-1, realization=0).plot()
     plt.figure()
@@ -75,9 +75,9 @@ def main():
 
     #convert tasmax to yearly, and then the geo resolution of population
     time_axis = np.array([DatetimeNoLeap(year, 1, 1) for year in range(2015, 2101)])
-    new_tasmax = regrid_1d(tasmax, time_axis, 'time', aggregation=Aggregation.interp_mean)
-    new_tasmax = regrid_1d(new_tasmax, pop['lat'].data, 'lat', aggregation=Aggregation.max)
-    new_tasmax = regrid_1d(new_tasmax, pop['lon'].data, 'lon', aggregation=Aggregation.max)
+    new_tasmax = regrid_1d(tasmax, time_axis, 'time', aggregation=RegridType.interp_mean)
+    new_tasmax = regrid_1d(new_tasmax, pop['lat'].data, 'lat', aggregation=RegridType.interp_mean)
+    new_tasmax = regrid_1d(new_tasmax, pop['lon'].data, 'lon', aggregation=RegridType.interp_mean)
     plt.figure()
     new_tasmax.isel(time=0,ssp=-1, realization=0).plot()
     plt.figure()
@@ -86,8 +86,8 @@ def main():
 
     
     #conservatively convert population to the resolution of modis
-    new_pop = regrid_1d(pop, modis['lat'].data, 'lat', aggregation=Aggregation.conserve)
-    new_pop = regrid_1d(new_pop, modis['lon'].data, 'lon', aggregation=Aggregation.conserve)
+    new_pop = regrid_1d(pop, modis['lat'].data, 'lat', aggregation=RegridType.conserve)
+    new_pop = regrid_1d(new_pop, modis['lon'].data, 'lon', aggregation=RegridType.conserve)
 
     #plot old vs new population (clip old population to match bounds of new population)
     plt.figure()
@@ -107,8 +107,8 @@ def main():
     
 
     #conservatively convert population to the resolution of modis
-    new_pop = regrid_1d(pop, tasmax['lat'].data, 'lat', aggregation=Aggregation.conserve)
-    new_pop = regrid_1d(new_pop, tasmax['lon'].data, 'lon', aggregation=Aggregation.conserve)
+    new_pop = regrid_1d(pop, tasmax['lat'].data, 'lat', aggregation=RegridType.conserve)
+    new_pop = regrid_1d(new_pop, tasmax['lon'].data, 'lon', aggregation=RegridType.conserve)
 
     #plot old vs new population (clip old population to match bounds of new population)
     plt.figure()
