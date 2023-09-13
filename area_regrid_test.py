@@ -241,9 +241,11 @@ def get_interp_mean_overlaps(overlaps:np.ndarray, offset:BinOffset, old_coords:n
         interp_mask[:-1, selected_bins] += overlaps[1:, selected_bins]
     elif offset == BinOffset.center:
         #TODO: handle correctly selecting three cells for each bin
+        raise NotImplementedError(f'Currently this doesn\'t handle the interpolation correctly, and values are off from what they should be')
         interp_mask[:-1] += overlaps[1:]
         interp_mask[1:] += overlaps[:-1]
     elif offset == BinOffset.right:
+        raise NotImplementedError(f'Currently this doesn\'t handle the interpolation correctly, and values are off from what they should be')
         interp_mask[1:, selected_bins] += overlaps[:-1, selected_bins]
     interp_mask = interp_mask > 0
 
