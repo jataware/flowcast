@@ -216,7 +216,7 @@ def compute_overlap(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     
     return np.ascontiguousarray(overlap, dtype=np.float64)
 
-def get_interp_mean_overlaps(overlaps:np.ndarray, offset:BinOffset, old_coords:np.ndarray, new_coords:np.ndarray) -> np.ndarray:
+def get_interp_mean_overlaps(overlaps:np.ndarray, old_coords:np.ndarray, new_coords:np.ndarray) -> np.ndarray:
     """
     Convert the overlaps matrix to one that will perform:
     - interpolation for resolution increases
@@ -231,36 +231,24 @@ def get_interp_mean_overlaps(overlaps:np.ndarray, offset:BinOffset, old_coords:n
         # resolution decrease just uses existing overlaps matrix
         return overlaps
 
-    # count the number of cells in each bin
-    bin_counts = (overlaps > 0).sum(axis=0)
-    selected_bins = bin_counts == 1
+    # compute the distances from each old cell to each new cell
+    distances = np.abs(old_coords[:, None] - new_coords[None, :])
 
-    # create a mask over which values are included in the interpolation for that bin
-    interp_mask = overlaps.copy()
-    if offset == BinOffset.left:
-        interp_mask[:-1, selected_bins] += overlaps[1:, selected_bins]
-    elif offset == BinOffset.center:
-        #TODO: handle correctly selecting three cells for each bin
-        raise NotImplementedError(f'Currently this doesn\'t handle the interpolation correctly, and values are off from what they should be')
-        interp_mask[:-1] += overlaps[1:]
-        interp_mask[1:] += overlaps[:-1]
-    elif offset == BinOffset.right:
-        raise NotImplementedError(f'Currently this doesn\'t handle the interpolation correctly, and values are off from what they should be')
-        interp_mask[1:, selected_bins] += overlaps[:-1, selected_bins]
-    interp_mask = interp_mask > 0
+    #zero out everything except for the closest two cells in each column
+    distance_ranks = np.argsort(distances, axis=0)#[:2]
+    distances[distance_ranks[2:], np.arange(distances.shape[1])] = 0
 
-    # compute the distances of each old cell from the new cell (masking those that are too far away)
-    offsets = np.abs(old_coords[:,None] - new_coords[None, :]) * interp_mask
+    #invert the distances so the closest cell has the largest weight
+    mask = distances > 0
+    distances = (distances.sum(axis=0)[None] - distances) * mask
 
-    # invert the offsets so that the closest cell has the largest weight
-    offsets = (offsets.sum(axis=0)[None] - offsets) * interp_mask
 
-    # normalize so that each column has the same sum as the original column
-    offset_sum = offsets.sum(axis=0)
-    offsets[:, offset_sum > 0] /= offset_sum[offset_sum > 0]
-    offsets *= overlaps.sum(axis=0)[None]
+    # normalize so that each column sums up to 1
+    distances_sum = distances.sum(axis=0)
+    distances[:, distances_sum > 0] /= distances_sum[distances_sum > 0]
 
-    return offsets
+    return distances
+
 
 
 
@@ -325,7 +313,7 @@ def regrid_1d(
 
     if aggregation == Aggregation.interp_mean:
         # modify the overlaps matrix so that it works for interp_mean
-        overlaps = get_interp_mean_overlaps(overlaps, offset, old_coords, new_coords)
+        overlaps = get_interp_mean_overlaps(overlaps, old_coords, new_coords)
         aggregation = Aggregation.mean
     #TODO: may need to have a similar process for mode...
 
@@ -343,7 +331,7 @@ def regrid_1d(
     old_data[~validmask] = 0
 
     #perform the regridding on the data, and replace any nans
-    result = regrid_1d_reducer(old_data, overlaps, aggregation)
+    result = regrid_1d_reducer(old_data, overlaps, aggregation, old_coords, new_coords)
     replace_nans(result, validmask, overlaps)
 
     # move the dimension back to its original position
@@ -362,7 +350,7 @@ def regrid_1d(
 
 
 
-def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Aggregation) -> np.ndarray:
+def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Aggregation, old_coords:np.ndarray, new_coords:np.ndarray) -> np.ndarray:
     """
     Perform the actual regridding reduction over the output bins, according to the aggregation method
     """
