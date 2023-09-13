@@ -231,15 +231,20 @@ def get_interp_mean_overlaps(overlaps:np.ndarray, offset:BinOffset, old_coords:n
         # resolution decrease just uses existing overlaps matrix
         return overlaps
 
+    # count the number of cells in each bin
+    bin_counts = (overlaps > 0).sum(axis=0)
+    selected_bins = bin_counts == 1
+
     # create a mask over which values are included in the interpolation for that bin
     interp_mask = overlaps.copy()
     if offset == BinOffset.left:
-        interp_mask[:-1] += overlaps[1:]
+        interp_mask[:-1, selected_bins] += overlaps[1:, selected_bins]
     elif offset == BinOffset.center:
+        #TODO: handle correctly selecting three cells for each bin
         interp_mask[:-1] += overlaps[1:]
         interp_mask[1:] += overlaps[:-1]
     elif offset == BinOffset.right:
-        interp_mask[1:] += overlaps[:-1]
+        interp_mask[1:, selected_bins] += overlaps[:-1, selected_bins]
     interp_mask = interp_mask > 0
 
     # compute the distances of each old cell from the new cell (masking those that are too far away)
