@@ -46,6 +46,9 @@ class LongitudeConvention(Enum):
 
 
 #TODO: consider having a latitude convention
+# class LatitudeConvention(Enum):
+#     degrees = auto()
+#     radians = auto()
 
 
 @dataclass
