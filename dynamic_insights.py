@@ -227,7 +227,7 @@ class Threshold:
 GeoRegridType = RegridType
 TimeRegridType = RegridType
 regrid_map:dict[CMIP6Data|OtherData, tuple[GeoRegridType, TimeRegridType]] = {
-    CMIP6Data.tasmax: (GeoRegridType.interp_mean, TimeRegridType.interp_mean),
+    CMIP6Data.tasmax: (GeoRegridType.interp_mean, TimeRegridType.max),
     CMIP6Data.tas: (GeoRegridType.interp_mean, TimeRegridType.interp_mean),
     CMIP6Data.pr: (GeoRegridType.interp_mean, TimeRegridType.interp_mean),
     OtherData.population: (GeoRegridType.conserve, TimeRegridType.interp_mean),
@@ -992,8 +992,6 @@ def heat_scenario():
     plt.title('People Exposed to Heatwaves by Country')
     plt.legend()
     plt.show()
-
-    pdb.set_trace()
 
 
 
