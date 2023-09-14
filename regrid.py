@@ -58,6 +58,7 @@ def compute_overlap(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     
     return np.ascontiguousarray(overlap, dtype=np.float64)
 
+from matplotlib import pyplot as plt
 def get_interp_mean_overlaps(overlaps:np.ndarray, old_coords:np.ndarray, new_coords:np.ndarray) -> np.ndarray:
     """
     Convert the overlaps matrix to one that will perform:
@@ -77,17 +78,19 @@ def get_interp_mean_overlaps(overlaps:np.ndarray, old_coords:np.ndarray, new_coo
     distances = np.abs(old_coords[:, None] - new_coords[None, :])
 
     #zero out everything except for the closest two cells in each column
-    distance_ranks = np.argsort(distances, axis=0)#[:2]
-    distances[distance_ranks[2:], np.arange(distances.shape[1])] = 0
+    distance_ranks = np.argsort(distances, axis=0)
+    distances[distance_ranks[2:], np.arange(distances.shape[1])] = np.nan
 
     #invert the distances so the closest cell has the largest weight
-    mask = distances > 0
-    distances = (distances.sum(axis=0)[None] - distances) * mask
+    distances = np.nansum(distances, axis=0)[None] - distances
 
 
     # normalize so that each column sums up to 1
-    distances_sum = distances.sum(axis=0)
+    distances_sum = np.nansum(distances, axis=0)
     distances[:, distances_sum > 0] /= distances_sum[distances_sum > 0]
+
+    # replace nans with 0
+    distances[np.isnan(distances)] = 0
 
     return distances
 
@@ -98,11 +101,9 @@ def get_nearest_overlaps(old_coords:np.ndarray, new_coords:np.ndarray) -> np.nda
     # compute the distances from each old cell to each new cell
     distances = np.abs(old_coords[:, None] - new_coords[None, :])
 
-    #zero out everything except for the closest cell in each column
+    #zero out everything except for the closest cell in each column, and set the closest cell to 1
     distance_ranks = np.argsort(distances, axis=0)
     distances[distance_ranks[1:], np.arange(distances.shape[1])] = 0
-
-    # set all nonzero values to 1
     distances[distances > 0] = 1
 
     return distances
