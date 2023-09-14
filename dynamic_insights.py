@@ -164,18 +164,18 @@ def get_signature_from_source(method):
 #     return lon_bins
 
 
-def chunk_data(data:xr.DataArray, *, exclude:str|list[str]=None, chunk_size=1) -> xr.DataArray:
-    #convert exclude to a set
-    if exclude is None:
-        exclude = set()
-    elif isinstance(exclude, str):
-        exclude = {exclude}
-    else:
-        exclude = set(exclude)
+# def chunk_data(data:xr.DataArray, *, exclude:str|list[str]=None, chunk_size=1) -> xr.DataArray:
+#     #convert exclude to a set
+#     if exclude is None:
+#         exclude = set()
+#     elif isinstance(exclude, str):
+#         exclude = {exclude}
+#     else:
+#         exclude = set(exclude)
 
-    data = data.chunk({coord: chunk_size for coord in data.coords if coord not in exclude})
+#     data = data.chunk({coord: chunk_size for coord in data.coords if coord not in exclude})
     
-    return data
+#     return data
 
 
 
@@ -278,7 +278,7 @@ class OperandID(str): ...
 class Pipeline:
 
 
-    def __init__(self, *, realizations: Realization|list[Realization], scenarios: Scenario|list[Scenario]):
+    def __init__(self, *, realizations: Realization|list[Realization], scenarios: Scenario|list[Scenario], verbose:bool=True):
         
         # static settings for data to be used in pipeline
         self.realizations: list[Realization] = realizations if isinstance(realizations, list) else [realizations]
@@ -305,6 +305,9 @@ class Pipeline:
 
         # tmp id counter
         self.tmp_id_counter = count(0)
+
+        # whether to print out debug info during pipeline execution
+        self.verbose = verbose
 
         # bind the current instance to all unwrapped compiled methods (so we don't need to pass the instance manually)
         for attr_name, attr_value in vars(Pipeline).items():
@@ -893,7 +896,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         transform = from_bounds(lon.min(), lat.min(), lon.max(), lat.max(), len(lon), len(lat))
 
         for i, (_, country, gid, geometry) in enumerate(countries_shp.itertuples()):
-            print(f'processing {country}...')
+            self.print(f'processing {country}...')
 
             # Generate a mask for the current country and apply the mask to the data
             mask = geometry_mask([geometry], transform=transform, invert=True, out_shape=(len(lat), len(lon)))
@@ -946,15 +949,21 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
     def execute(self):
         """Execute the pipeline"""
         for func, args, kwargs in self.steps:
+            self.print(self.step_repr((func, args, kwargs)))
             func(*args, **kwargs)
 
     @property
     def sf(self):
         """Get the country shapefile"""
         if self._sf is None:
-            print(f'Loading country shapefile...')
+            self.print(f'Loading country shapefile...')
             self._sf = gpd.read_file('gadm_0/gadm36_0.shp')
         return self._sf
+    
+    def print(self, *args, **kwargs):
+        if self.verbose:
+            print(*args, **kwargs)
+    
 
 
 def get_available_cmip6_data() -> list[tuple[CMIP6Data, Model, Scenario, Realization]]:
@@ -1078,7 +1087,7 @@ def debug_scenario():
 
 
 if __name__ == '__main__':
-    # heat_scenario()
+    heat_scenario()
     # crop_scenario()
-    demo_scenario()
+    # demo_scenario()
     # debug_scenario()
