@@ -8,8 +8,6 @@ from warnings import warn
 from spacetime import datetimeNoLeap_to_epoch
 
 
-import pdb
-
 
 class BinOffset(Enum):
     left = auto()
@@ -58,7 +56,7 @@ def compute_overlap(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     
     return np.ascontiguousarray(overlap, dtype=np.float64)
 
-from matplotlib import pyplot as plt
+
 def get_interp_mean_overlaps(overlaps:np.ndarray, old_coords:np.ndarray, new_coords:np.ndarray) -> np.ndarray:
     """
     Convert the overlaps matrix to one that will perform:
