@@ -690,6 +690,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
             self.bind_value(y, var)
             return
         
+        # generate the new time coordinates
         min_time = var.data.time.data.min()
         max_time = var.data.time.data.max()
         if target == Frequency.monthly:
@@ -705,6 +706,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
             max_time = DatetimeNoLeap(max_time.year + max_time.year % 10, 1, 1)
             times = np.array([DatetimeNoLeap(year, 1, 1) for year in range(min_time.year, max_time.year+1, 10)])
 
+        # regrid the data and save the result to the pipeline namespace
         new_data = regrid_1d(var.data, times, 'time', aggregation=var.time_regrid_type)
         var = Variable.from_result(new_data, var)
         var.frequency = target
@@ -747,7 +749,30 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
             x (str): the identifier of the data to regrid
             target (Resolution): the fixed target geo resolution to regrid to, e.g. Resolution(0.5, 0.5),
         """
-        raise NotImplementedError()
+        var = self.get_value(x)
+        if var.resolution == target or var.geo_regrid_type is None:
+            #skip regridding
+            self.bind_value(y, var)
+            return
+
+        # raw geo coordinates at target resolution
+        lats = np.arange(-90, 90, target.dy)
+        lons = np.arange(-180, 180, target.dx)
+
+        # crop geo coordinates around the data's maximum extents
+        min_lat = var.data.lat.data.min()
+        max_lat = var.data.lat.data.max()
+        min_lon = var.data.lon.data.min()
+        max_lon = var.data.lon.data.max()
+        lats = lats[(lats + target.dy/2 >= min_lat) & (lats - target.dy/2 <= max_lat)]
+        lons = lons[(lons + target.dx/2 >= min_lon) & (lons - target.dx/2 <= max_lon)]
+
+        # regrid the data and save the result to the pipeline namespace
+        new_data = regrid_1d(var.data, lats, 'lat', aggregation=var.geo_regrid_type)
+        new_data = regrid_1d(new_data, lons, 'lon', aggregation=var.geo_regrid_type)
+        var = Variable.from_result(new_data, var)
+        var.resolution = target
+        self.bind_value(y, var)
     
     @compile
     def matched_geo_regrid(self, y:ResultID, x:OperandID, /, target:str):
@@ -849,13 +874,6 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         data = var.data
         lat: np.ndarray = data.lat.values
         lon: np.ndarray = data.lon.values
-        lon_grid, lat_grid = np.meshgrid(lon, lat)
-
-
-        # ensure data has correct coordinate system
-        # data = data.rio.write_crs(4326)
-
-
 
         # if no countries are specified, use all of them
         if countries is None:
@@ -871,14 +889,14 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         # set up new np array of shape [len(countries), *data.shape]
         out_data = np.zeros((len(countries), *data.shape), dtype=data.dtype)
         
+        # needed for geometry_mask. cache here since we don't need to recompute it for each country
+        transform = from_bounds(lon.min(), lat.min(), lon.max(), lat.max(), len(lon), len(lat))
+
         for i, (_, country, gid, geometry) in enumerate(countries_shp.itertuples()):
             print(f'processing {country}...')
 
-            # Generate a mask for the current country
-            transform = from_bounds(lon.min(), lat.min(), lon.max(), lat.max(), len(lon), len(lat))
+            # Generate a mask for the current country and apply the mask to the data
             mask = geometry_mask([geometry], transform=transform, invert=True, out_shape=(len(lat), len(lon)))
-
-            # apply the mask to the data
             masked_data = data.where(xr.DataArray(mask, coords={'lat':lat, 'lon':lon}, dims=['lat', 'lon']))
 
             # insert the masked data into the output array
@@ -1032,6 +1050,11 @@ def demo_scenario():
 
     pipe.execute()
 
+    pipe.get_value('global_urban_exposure').data.plot()
+    pipe.get_value('global_not_urban_exposure').data.plot()
+    plt.legend(['urban', 'not urban'])
+    plt.show()
+
     pdb.set_trace()
     ...
 
@@ -1055,7 +1078,7 @@ def debug_scenario():
 
 
 if __name__ == '__main__':
-    heat_scenario()
+    # heat_scenario()
     # crop_scenario()
-    # demo_scenario()
+    demo_scenario()
     # debug_scenario()
