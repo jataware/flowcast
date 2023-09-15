@@ -276,7 +276,7 @@ def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Regr
         result = np.nansum(binned_data, axis=-1)
 
     else:
-        raise NotImplementedError(f'Regrid aggregation method {aggregation} not implemented.')
+        raise NotImplementedError(f'Unrecognized regrid aggregation method: {aggregation}. Expected one of: {[*RegridType.__members__.values()]}')
 
     return result
     

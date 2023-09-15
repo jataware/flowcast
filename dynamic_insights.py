@@ -112,13 +112,14 @@ from rasterio.features import geometry_mask
 
 from spacetime import Frequency, Resolution, DatetimeNoLeap, LongitudeConvention, inplace_set_longitude_convention
 from regrid import RegridType, regrid_1d
+from data import Variable
 
 
 import re
 from itertools import count
 from inspect import signature, getsource, Signature
 from enum import Enum, auto
-from typing import Any
+from typing import Any, Callable, Protocol
 from types import MethodType
 from dataclasses import dataclass
 
@@ -130,83 +131,6 @@ from rich import print, traceback; traceback.install(show_locals=True)
 import pdb
 
 
-# needed for intellisense to correctly work on @compile decorated methods
-def get_signature_from_source(method):
-    source = getsource(method)
-    match = re.search(r'def\s+\w+\((.*?)\):', source, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    else:
-        raise ValueError("Couldn't extract function signature from source")
-
-
-
-# def create_lat_bins(lats:np.ndarray, include_first:bool=True, include_last:bool=True) -> np.ndarray:
-#     lat_delta = lats[1] - lats[0]
-#     lat_bins = np.concatenate((lats, [lats[-1] + lat_delta])) - lat_delta/2
-
-#     # add small epsilon to first and last elements to ensure that the bounds are inclusive
-#     eps = np.sign(lat_delta) * 1e-10
-#     lat_bins[0] += -eps if include_first else eps
-#     lat_bins[-1] += eps if include_last else -eps
-
-#     return lat_bins
-
-# def create_lon_bins(lons:np.ndarray, include_first:bool=True, include_last:bool=True) -> np.ndarray:
-#     lon_delta = lons[1] - lons[0]
-#     lon_bins = np.concatenate((lons, [lons[-1] + lon_delta])) - lon_delta/2
-    
-#     # add small epsilon to first and last elements to ensure that the bounds are inclusive
-#     eps = np.sign(lon_delta) * 1e-10
-#     lon_bins[0] += -eps if include_first else eps
-#     lon_bins[-1] += eps if include_last else -eps
-    
-#     return lon_bins
-
-
-# def chunk_data(data:xr.DataArray, *, exclude:str|list[str]=None, chunk_size=1) -> xr.DataArray:
-#     #convert exclude to a set
-#     if exclude is None:
-#         exclude = set()
-#     elif isinstance(exclude, str):
-#         exclude = {exclude}
-#     else:
-#         exclude = set(exclude)
-
-#     data = data.chunk({coord: chunk_size for coord in data.coords if coord not in exclude})
-    
-#     return data
-
-
-
-
-class Scenario(str, Enum):
-    ssp126 = 'ssp126'
-    ssp245 = 'ssp245'
-    ssp370 = 'ssp370'
-    ssp585 = 'ssp585'
-
-
-class Realization(str, Enum):
-    r1i1p1f1 = 'r1i1p1f1'
-    #TODO: other realizations as needed
-
-class Model(str, Enum):
-    CAS_ESM2_0 = 'CAS-ESM2-0'
-    FGOALS_f3_L = 'FGOALS-f3-L'
-    #TODO: other models as needed
-
-
-
-class CMIP6Data(str, Enum):
-    tasmax = 'tasmax'
-    tas = 'tas'
-    pr = 'pr'
-    #TODO: other variables as needed
-
-class OtherData(str, Enum):
-    population = 'population'
-    land_cover = 'land_cover'
 
 
 class ThresholdType(Enum):
@@ -222,31 +146,6 @@ class Threshold:
     value: float|int
     type: ThresholdType
 
-
-# For every type of data, indicate what type of regridding operation is appropriate
-GeoRegridType = RegridType
-TimeRegridType = RegridType
-regrid_map:dict[CMIP6Data|OtherData, tuple[GeoRegridType, TimeRegridType]] = {
-    CMIP6Data.tasmax: (GeoRegridType.interp_mean, TimeRegridType.max),
-    CMIP6Data.tas: (GeoRegridType.interp_mean, TimeRegridType.interp_mean),
-    CMIP6Data.pr: (GeoRegridType.interp_mean, TimeRegridType.interp_mean),
-    OtherData.population: (GeoRegridType.conserve, TimeRegridType.interp_mean),
-    OtherData.land_cover: (GeoRegridType.nearest, None),
-    #TODO: other variables as needed
-}
-
-@dataclass
-class Variable:
-    data: xr.DataArray
-    frequency: Frequency|str
-    resolution: Resolution|str
-    time_regrid_type: RegridType|None
-    geo_regrid_type: RegridType|None
-
-    @staticmethod
-    def from_result(data:xr.DataArray, prev:'Variable') -> 'Variable':
-        """Create a new Variable from the given data, inheriting the geo/temporal resolution from a previous Variable"""
-        return Variable(data, prev.frequency, prev.resolution, prev.time_regrid_type, prev.geo_regrid_type)
 
 # Operations
 # - load
@@ -274,19 +173,50 @@ class OperandID(str): ...
 # - all data loading methods should return xr.DataArray, not xr.Dataset
 # - can auto_regrid be handled by the decorator? e.g. by looking at OperandIDs
 
+@dataclass
+class PipelineVariable(Variable):
+    frequency: Frequency|str
+    resolution: Resolution|str
+    
+    @staticmethod
+    def from_result(
+        data:xr.DataArray,
+        prev:'PipelineVariable',
+        *,
+        time_regrid_type:RegridType=None,
+        geo_regrid_type:RegridType=None,
+        frequency:Frequency|str=None,
+        resolution:Resolution|str=None
+    ) -> 'PipelineVariable':
+        """Create a new Variable from the given data, inheriting the geo/temporal resolution from a previous Variable"""
+        return PipelineVariable(
+            data,
+            time_regrid_type or prev.time_regrid_type,
+            geo_regrid_type or prev.geo_regrid_type,
+            frequency or prev.frequency,
+            resolution or prev.resolution
+        )
+    
+    @classmethod
+    def from_base_variable(cls, var:Variable, frequency:Frequency|str, resolution:Resolution|str) -> 'PipelineVariable':
+        return cls(var.data, var.time_regrid_type, var.geo_regrid_type, frequency, resolution)
+    
+from typing import TypeVar
+from typing_extensions import ParamSpec
+_R_co = TypeVar("_R_co", covariant=True)
+_P = ParamSpec("_P")
+
+# class CallableWithUnwrapped(Protocol[_P, _R_co], Callable[_P, _R_co]):
+#     # def __call__(self, *args: _P.args, **kwargs: _P.kwargs) -> _R_co: ...
+    
+#     @property
+#     def unwrapped(self) -> Callable[_P, _R_co]: ...
 
 class Pipeline:
 
 
-    def __init__(self, *, realizations: Realization|list[Realization], scenarios: Scenario|list[Scenario], verbose:bool=True):
+    def __init__(self, *, verbose:bool=True):
         
-        # static settings for data to be used in pipeline
-        self.realizations: list[Realization] = realizations if isinstance(realizations, list) else [realizations]
-        self.scenarios: list[Scenario] = scenarios if isinstance(scenarios, list) else [scenarios]
-
-        assert len(self.realizations) > 0, 'Must specify at least one realization'
-        assert len(self.scenarios) > 0, 'Must specify at least one scenario'
-
         # dynamic settings for data to be used in pipeline
         self.resolution: Resolution|str|None = None
         self.frequency: Frequency|str|None = None
@@ -298,7 +228,7 @@ class Pipeline:
         self.last_set_identifier: str|None = None
 
         # namespace for binding operation results to identifiers 
-        self.env: dict[str, Variable] = {}
+        self.env: dict[str, PipelineVariable] = {}
 
         # keep track of all identifiers while the pipeline is being compiled
         self.compiled_ids: set[str] = set()
@@ -319,7 +249,7 @@ class Pipeline:
         self._sf = None
 
 
-    def compile(method:MethodType):
+    def compile(method:Callable[_P, _R_co]) -> Callable[_P, None]:
         """
         Decorator to make a method a compile-time method.
 
@@ -371,28 +301,7 @@ class Pipeline:
         # save the unmodified original function in for use inside pipeline methods
         wrapper.unwrapped = method
 
-
-        # hacky way to set the wrapper to have the same signature as the original function (for intellisense)
-        formatted_sig_args = get_signature_from_source(method)
-        formatted_call_args = ', '.join([p.name for p in params])
-        wrapper_src = f"""
-def intellisense_wrapper({formatted_sig_args}):
-    return wrapper({formatted_call_args})
-intellisense_wrapper.unwrapped = wrapper.unwrapped
-"""
-
-        # Set the namespace for eval
-        namespace = {
-            'wrapper': wrapper,
-            'Pipeline': 'Pipeline',
-            **globals(),
-        }
-
-        # Execute the source code to create the intellisense friendly wrapper
-        exec(wrapper_src, namespace)
-        intellisense_wrapper = namespace['intellisense_wrapper']
-
-        return intellisense_wrapper
+        return wrapper
 
     
     @staticmethod
@@ -445,19 +354,19 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
 
     
     
-    def bind_value(self, identifier:ResultID, value:Variable):
+    def bind_value(self, identifier:ResultID, value:PipelineVariable):
         """Bind a value to an identifier in the pipeline namespace"""
         assert identifier not in self.env, f'Identifier "{identifier}" already exists in pipeline namespace. All identifiers must be unique.'
         self.last_set_identifier = identifier
         self.env[identifier] = value
 
 
-    def get_value(self, identifier:OperandID) -> Variable:
+    def get_value(self, identifier:OperandID) -> PipelineVariable:
         """Get a value from the pipeline namespace"""
         return self.env[identifier]
     
 
-    def get_last_value(self) -> Variable:
+    def get_last_value(self) -> PipelineVariable:
         """Get the last value that was set in the pipeline namespace"""
         assert self.last_set_identifier is not None, 'No value has been set yet'
         return self.env[self.last_set_identifier]
@@ -507,7 +416,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
 
     
     @compile
-    def load(self, name:ResultID, /, data:CMIP6Data|OtherData, model:Model|None=None):
+    def load(self, name:ResultID, /, loader:Callable[[], PipelineVariable]):
         """
         Load existing data into the pipeline
 
@@ -516,133 +425,14 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
             data (enum): the data to load
             model (enum, optional): the model to load the data from (required for CMIP6 data)
         """
+        var = loader()
 
-        # use specific data loader depending on the requested data
-        
-        if data == OtherData.population:
-            var = self.get_population_data(self.scenarios)
-        elif data == OtherData.land_cover:
-            var = self.get_land_use_data()
-        elif isinstance(data, CMIP6Data):
-            assert model is not None, 'Must specify a model for CMIP6 data'
-            var = self.load_cmip6_data(data, model)
-        else:
-            raise ValueError(f'Unrecognized data type: {data}. Expected one of: {CMIP6Data}, {OtherData}')
+        #ensure the lon conventions match
+        if 'lon' in var.data.coords:
+            inplace_set_longitude_convention(var.data, LongitudeConvention.neg180_180)
+        #TODO: match the latitude convention
 
-        # grab the corresponding geo/temporal regrid types for this data
-        geo_regrid_type, time_regrid_type = regrid_map[data]
-
-        # adjust the latlon conventions if needed
-        if 'lat' in var.coords and 'lon' in var.coords:
-            inplace_set_longitude_convention(var, LongitudeConvention.neg180_180)
-            #TODO: set latitude_convention
-
-        # extract dataarray from dataset, and wrap in a Variable (indicating current geo/time resolution is itself)
-        var = Variable(var, name, name, time_regrid_type, geo_regrid_type)
-
-        # save the variable to the pipeline namespace under the given identifier
-        self.bind_value(name, var)
-
-
-    #TODO: make this handle DataArrays instead of Datasets 
-    def load_cmip6_data(self, variable:CMIP6Data, model:Model) -> xr.DataArray:
-        """get an xarray with cmip6 data from the specified model"""
-
-        all_realizations: list[xr.Dataset] = []
-        for realization in self.realizations:
-            all_scenarios: list[xr.Dataset] = []
-            for scenario in self.scenarios:
-        
-                if model == Model.CAS_ESM2_0:
-                    data = self.CAS_ESM2_0_cmip_loader(variable, realization, scenario)
-                
-                elif model == Model.FGOALS_f3_L:
-                    data = self.FGOALS_f3_L_cmip_loader(variable, realization, scenario)
-
-                #TODO: other models as needed
-                else:
-                    raise ValueError(f'Unrecognized model: {model}. Expected one of: {[*Model.__members__.values()]}')
-            
-                # add a scenario coordinate
-                data = data.assign_coords(
-                    ssp=('ssp', np.array([scenario.value], dtype='object'))
-                )
-                all_scenarios.append(data)
-            
-            # combine the scenario data into one xarray
-            data = xr.concat(all_scenarios, dim='ssp')
-            data = data.assign_coords(
-                realization=('realization', np.array([realization.value], dtype='object'))
-            )
-            all_realizations.append(data)
-
-        # combine all the data into one xarray with realization as a dimension
-        dataset = xr.concat(all_realizations, dim='realization')
-
-        return dataset[variable.value]
-
-
-    #TODO: make this return a DataArray instead of a Dataset
-    @staticmethod
-    def CAS_ESM2_0_cmip_loader(variable: CMIP6Data, realization: Realization, scenario: Scenario) -> xr.Dataset:#xr.DataArray:
-        """Data loader for the CAS-ESM2-0 model"""
-        return xr.open_dataset(f'data/cmip6/{variable}/{variable}_Amon_CAS-ESM2-0_{scenario}_{realization}_gn_201501-210012.nc')#[variable.value]
-
-    #TODO: make this return a DataArray instead of a Dataset
-    @staticmethod
-    def FGOALS_f3_L_cmip_loader(variable: CMIP6Data, realization: Realization, scenario: Scenario) -> xr.Dataset:#xr.DataArray:
-        """Data loader for the FGOALS-f3-L model"""        
-        return xr.open_dataset(f'data/cmip6/{variable}/{variable}_Amon_FGOALS-f3-L_{scenario}_{realization}_gr_201501-210012.nc')#[variable.value]
-
-  
-    @staticmethod
-    def get_population_data(scenarios: list[Scenario]) -> xr.DataArray:
-        """get an xarray with the specified population data"""
-
-        all_scenarios: list[xr.Dataset] = []
-        for scenario in scenarios:
-
-            all_years: list[xr.Dataset] = []
-            ssp = scenario.value[:-2] # remove the last two characters (e.g., 'ssp126' -> 'ssp1')
-
-            for year in [2010, 2020, 2030, 2040, 2050, 2060, 2070, 2080, 2090, 2100]:
-                data = xr                                                                           \
-                    .open_dataset(f'data/population/{ssp.upper()}/Total/NetCDF/{ssp}_{year}.nc')    \
-                    .rename({f'{ssp}_{year}': 'population'})                                        \
-                    .assign_coords(
-                        time=DatetimeNoLeap(year, 1, 1),
-                        ssp=('ssp', np.array([scenario.value], dtype='object')) #note for population, only the first number is relevant
-                    )
-                all_years.append(data)
-
-            # combine the scenario data into one xarray
-            data = xr.concat(all_years, dim='time')
-            all_scenarios.append(data)
-
-        # combine all the data into one xarray with ssp as a dimension
-        dataset = xr.concat(all_scenarios, dim='ssp')
-
-        # # DEBUG crop to a smaller area
-        # cropped_dataset = dataset.sel(lat=slice(30, -10, 1), lon=slice(-10, 30))
-        # return cropped_dataset
-
-        return dataset['population']
-
-
-    @staticmethod
-    def get_land_use_data() -> xr.Dataset:
-        modis = xr.open_dataset('data/MODIS/land-use-5km.nc')
-        modis = modis['LC_Type1']
-        modis['time'] = modis.indexes['time'].to_datetimeindex().map(lambda dt: DatetimeNoLeap(dt.year, dt.month, dt.day))
-        
-        #TODO: handling modis over time? for now just take a single frame
-        modis = modis.isel(time=0).drop(['time', 'crs'])
-
-        return modis
-
-
-
-    #TODO: other models' data loaders as needed
+        self.bind_value(name, PipelineVariable.from_base_variable(var, name, name))
 
 
     @compile
@@ -673,7 +463,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
             raise ValueError(f'Unrecognized threshold type: {threshold.type}. Expected one of: {[*ThresholdType.__members__.values()]}')
 
         # save the result to the pipeline namespace
-        self.bind_value(y, Variable.from_result(result, var))
+        self.bind_value(y, PipelineVariable.from_result(result, var))
 
 
 
@@ -711,8 +501,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
 
         # regrid the data and save the result to the pipeline namespace
         new_data = regrid_1d(var.data, times, 'time', aggregation=var.time_regrid_type)
-        var = Variable.from_result(new_data, var)
-        var.frequency = target
+        var = PipelineVariable.from_result(new_data, var, frequency=target)
         self.bind_value(y, var)
 
         
@@ -737,8 +526,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
             return
 
         new_data = regrid_1d(var.data, target_var.data.time.data, 'time', aggregation=var.time_regrid_type)
-        var = Variable.from_result(new_data, var)
-        var.frequency = target_var.frequency
+        var = PipelineVariable.from_result(new_data, var, frequency=target_var.frequency)
         self.bind_value(y, var)
 
 
@@ -773,8 +561,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         # regrid the data and save the result to the pipeline namespace
         new_data = regrid_1d(var.data, lats, 'lat', aggregation=var.geo_regrid_type)
         new_data = regrid_1d(new_data, lons, 'lon', aggregation=var.geo_regrid_type)
-        var = Variable.from_result(new_data, var)
-        var.resolution = target
+        var = PipelineVariable.from_result(new_data, var, resolution=target)
         self.bind_value(y, var)
     
     @compile
@@ -793,8 +580,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
 
         new_data = regrid_1d(var.data, target_var.data.lat.data, 'lat', aggregation=var.geo_regrid_type)
         new_data = regrid_1d(new_data, target_var.data.lon.data, 'lon', aggregation=var.geo_regrid_type)
-        var = Variable.from_result(new_data, var)
-        var.resolution = target_var.resolution
+        var = PipelineVariable.from_result(new_data, var, resolution=target_var.resolution)
         self.bind_value(y, var)
 
 
@@ -858,7 +644,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         result = var1.data * var2.data
 
         # save the result to the pipeline namespace
-        self.bind_value(y, Variable.from_result(result, var1))
+        self.bind_value(y, PipelineVariable.from_result(result, var1))
     
 
     @compile
@@ -916,7 +702,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         )
         
         # save the result to the pipeline namespace
-        self.bind_value(y, Variable.from_result(out_data, var))
+        self.bind_value(y, PipelineVariable.from_result(out_data, var))
 
     @compile
     def sum(self, y:ResultID, x:OperandID, /, dims:list[str]):
@@ -930,7 +716,7 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
         """
         var = self.get_value(x)
         result = var.data.sum(dim=dims)
-        self.bind_value(y, Variable.from_result(result, var))      
+        self.bind_value(y, PipelineVariable.from_result(result, var))      
 
 
     @compile
@@ -966,36 +752,24 @@ intellisense_wrapper.unwrapped = wrapper.unwrapped
     
 
 
-def get_available_cmip6_data() -> list[tuple[CMIP6Data, Model, Scenario, Realization]]:
-    # parse all cmip6 data filepaths, and make a list of what is available (variable, model, scenario, realization)
-    pdb.set_trace()
-    ...
 
 
 
 
 def heat_scenario():
+    from data import Realization, Scenario, Model, CMIP6Data, OtherData
+    realization=Realization.r1i1p1f1
+    scenario=Scenario.ssp585#[Scenario.ssp126, Scenario.ssp245, Scenario.ssp370, Scenario.ssp585],
 
-
-    pipe = Pipeline(
-        realizations=Realization.r1i1p1f1, 
-        scenarios=[Scenario.ssp585]#[Scenario.ssp126, Scenario.ssp245, Scenario.ssp370, Scenario.ssp585],
-    )
+    pipe = Pipeline()
     
-    # e.g. target fixed geo/temporal resolutions
-    # pipe.set_geo_resolution(Resolution(0.5, 0.5))
-    # pipe.set_time_resolution(Frequency.monthly)
-
-    # e.g. target geo/temporal resolution of existing data in pipeline
-    # pipe.set_geo_resolution('pop')
+    # set geo/temporal resolution targets for operations in the pipeline
     pipe.set_geo_resolution('pop')
-    # pipe.set_time_resolution('tasmax')
-    # pipe.set_time_resolution('pop')
     pipe.set_time_resolution(Frequency.yearly)
 
     # load the data
-    pipe.load('pop', OtherData.population)
-    pipe.load('tasmax', CMIP6Data.tasmax, Model.CAS_ESM2_0)
+    pipe.load('pop', OtherData.population(scenario=scenario))
+    pipe.load('tasmax', CMIP6Data.tasmax(model=Model.CAS_ESM2_0, scenario=scenario, realization=realization))
     
     # operations on the data to perform the scenario
     pipe.threshold('heat', 'tasmax', Threshold(308.15, ThresholdType.greater_than))
@@ -1014,7 +788,7 @@ def heat_scenario():
 
     # plot all the countries on a single plot
     for country in res.data['country'].values:
-        res.data.sel(country=country).isel(ssp=0).plot(label=country)
+        res.data.sel(country=country).plot(label=country)
 
     plt.title('People Exposed to Heatwaves by Country')
     plt.legend()
