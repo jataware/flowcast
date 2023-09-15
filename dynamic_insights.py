@@ -104,11 +104,7 @@ import xarray as xr
 import geopandas as gpd
 from rasterio.transform import from_bounds
 from rasterio.features import geometry_mask
-# from cftime import DatetimeNoLeap
 
-#TODO: pull this from elwood when it works
-# from elwood.elwood import regrid_dataframe
-# from regrid import Resolution
 
 from spacetime import Frequency, Resolution, DatetimeNoLeap, LongitudeConvention, inplace_set_longitude_convention
 from regrid import RegridType, regrid_1d
@@ -117,9 +113,10 @@ from data import Variable
 
 import re
 from itertools import count
-from inspect import signature, getsource, Signature
+from inspect import signature, Signature
 from enum import Enum, auto
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, TypeVar #, Protocol
+from typing_extensions import ParamSpec
 from types import MethodType
 from dataclasses import dataclass
 
@@ -169,9 +166,6 @@ class Threshold:
 class ResultID(str): ...
 class OperandID(str): ...
 
-#TODO:
-# - all data loading methods should return xr.DataArray, not xr.Dataset
-# - can auto_regrid be handled by the decorator? e.g. by looking at OperandIDs
 
 @dataclass
 class PipelineVariable(Variable):
@@ -201,8 +195,7 @@ class PipelineVariable(Variable):
     def from_base_variable(cls, var:Variable, frequency:Frequency|str, resolution:Resolution|str) -> 'PipelineVariable':
         return cls(var.data, var.time_regrid_type, var.geo_regrid_type, frequency, resolution)
     
-from typing import TypeVar
-from typing_extensions import ParamSpec
+
 _R_co = TypeVar("_R_co", covariant=True)
 _P = ParamSpec("_P")
 
