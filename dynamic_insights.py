@@ -409,7 +409,7 @@ class Pipeline:
 
     
     @compile
-    def load(self, name:ResultID, /, loader:Callable[[], PipelineVariable]):
+    def load(self, name:ResultID, /, loader:Callable[[], Variable]):
         """
         Load existing data into the pipeline
 
@@ -751,8 +751,6 @@ class Pipeline:
 
 def heat_scenario():
     from data import Realization, Scenario, Model, CMIP6Data, OtherData
-    realization=Realization.r1i1p1f1
-    scenario=Scenario.ssp585#[Scenario.ssp126, Scenario.ssp245, Scenario.ssp370, Scenario.ssp585],
 
     pipe = Pipeline()
     
@@ -761,8 +759,8 @@ def heat_scenario():
     pipe.set_time_resolution(Frequency.yearly)
 
     # load the data
-    pipe.load('pop', OtherData.population(scenario=scenario))
-    pipe.load('tasmax', CMIP6Data.tasmax(model=Model.CAS_ESM2_0, scenario=scenario, realization=realization))
+    pipe.load('pop', OtherData.population(scenario=Scenario.ssp585))
+    pipe.load('tasmax', CMIP6Data.tasmax(model=Model.CAS_ESM2_0, scenario=Scenario.ssp585, realization=Realization.r1i1p1f1))
     
     # operations on the data to perform the scenario
     pipe.threshold('heat', 'tasmax', Threshold(308.15, ThresholdType.greater_than))
@@ -804,15 +802,14 @@ def crop_scenario():
 
 
 def demo_scenario():
-    pipe = Pipeline(
-        realizations=Realization.r1i1p1f1,
-        scenarios=Scenario.ssp585
-    )
+    from data import Realization, Scenario, Model, CMIP6Data, OtherData
+
+    pipe = Pipeline()
     pipe.set_geo_resolution('modis')
     pipe.set_time_resolution('pop')
-    pipe.load('modis', OtherData.land_cover)
-    pipe.load('pop', OtherData.population)
-    pipe.load('tasmax', CMIP6Data.tasmax, Model.CAS_ESM2_0)
+    pipe.load('modis', OtherData.land_cover())
+    pipe.load('pop', OtherData.population(scenario=Scenario.ssp585))
+    pipe.load('tasmax', CMIP6Data.tasmax(realization=Realization.r1i1p1f1, scenario=Scenario.ssp585, model=Model.CAS_ESM2_0))
     pipe.threshold('heat', 'tasmax', Threshold(308.15, ThresholdType.greater_than))
     pipe.multiply('exposure0', 'heat', 'pop')
     pipe.threshold('urban_mask', 'modis', Threshold(13, ThresholdType.equal))
@@ -834,27 +831,9 @@ def demo_scenario():
     pdb.set_trace()
     ...
 
-def debug_scenario():
-    pipe = Pipeline(
-        realizations=Realization.r1i1p1f1,
-        scenarios=Scenario.ssp585
-    )
-    pipe.set_geo_resolution('modis')
-    pipe.set_time_resolution('pop')
-    pipe.load('modis', OtherData.land_cover)
-    pipe.load('pop', OtherData.population)
-    pipe.load('tasmax', CMIP6Data.tasmax, Model.CAS_ESM2_0)
-    pipe.multiply('res', 'pop', 'tasmax')
-
-    print(pipe)
-    pipe.execute()
-
-    # pdb.set_trace()
-    # ...
 
 
 if __name__ == '__main__':
-    heat_scenario()
+    # heat_scenario()
     # crop_scenario()
-    # demo_scenario()
-    # debug_scenario()
+    demo_scenario()

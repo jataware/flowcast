@@ -63,7 +63,7 @@ class DataLoader:
 
 class OtherData(DataLoader):
     @dataloader
-    def population(scenario:Scenario) -> Variable:
+    def population(*, scenario:Scenario) -> Variable:
         """Load the population data"""
         all_years: list[xr.Dataset] = []
         ssp = scenario.value[:-2] # remove the last two characters (e.g., 'ssp126' -> 'ssp1')
@@ -92,6 +92,7 @@ class OtherData(DataLoader):
         modis['time'] = modis.indexes['time'].to_datetimeindex().map(lambda dt: DatetimeNoLeap(dt.year, dt.month, dt.day))
         
         #TODO: handling modis over time? for now just take a single frame
+        #probably add a dynamic insights slice node to handle this
         modis = modis.isel(time=0).drop(['time', 'crs'])
 
         return Variable(modis, None, GeoRegridType.nearest)
