@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import numpy as np
-from dynamic_insights import Pipeline, Realization, Scenario, CMIP6Data, OtherData, Model
+from dynamic_insights import Pipeline
+from data import OtherData, CMIP6Data, Realization, Scenario, Model
 from spacetime import DatetimeNoLeap, LongitudeConvention, inplace_set_longitude_convention
 from regrid import regrid_1d, RegridType
 from matplotlib import pyplot as plt
@@ -10,16 +11,13 @@ import pdb
 
 
 def main():
-    pipe = Pipeline(
-        realizations=Realization.r1i1p1f1, 
-        scenarios=[Scenario.ssp585]#[Scenario.ssp126, Scenario.ssp245, Scenario.ssp370, Scenario.ssp585]
-    )
+    pipe = Pipeline()
 
-    pipe.load('pop', OtherData.population)
-    pipe.load('land_cover', OtherData.land_cover)
-    pipe.load('tasmax', CMIP6Data.tasmax, Model.CAS_ESM2_0)
-    pipe.load('pr', CMIP6Data.pr, Model.FGOALS_f3_L)
-    pipe.load('tas', CMIP6Data.tas, Model.FGOALS_f3_L)
+    pipe.load('pop', OtherData.population(scenario=Scenario.ssp585))
+    pipe.load('land_cover', OtherData.land_cover())
+    pipe.load('tasmax', CMIP6Data.tasmax(realization=Realization.r1i1p1f1, scenario=Scenario.ssp585, model=Model.CAS_ESM2_0))
+    pipe.load('pr', CMIP6Data.pr(realization=Realization.r1i1p1f1, scenario=Scenario.ssp585, model=Model.FGOALS_f3_L))
+    pipe.load('tas', CMIP6Data.tas(realization=Realization.r1i1p1f1, scenario=Scenario.ssp585, model=Model.FGOALS_f3_L))
     pipe.execute()
     pop = pipe.get_value('pop').data
     modis = pipe.get_value('land_cover').data
@@ -53,9 +51,9 @@ def main():
     new_pr = regrid_1d(new_pr, pop['lat'].data, 'lat', aggregation=RegridType.interp_mean)
     new_pr = regrid_1d(new_pr, pop['lon'].data, 'lon', aggregation=RegridType.interp_mean)
     plt.figure()
-    new_pr.isel(time=0,ssp=-1, realization=0).plot()
+    new_pr.isel(time=0).plot()
     plt.figure()
-    pr.isel(time=0,ssp=-1, realization=0).plot()
+    pr.isel(time=0).plot()
     plt.show()
 
 
@@ -66,9 +64,9 @@ def main():
     new_tas = regrid_1d(new_tas, pop['lat'].data, 'lat', aggregation=RegridType.interp_mean)
     new_tas = regrid_1d(new_tas, pop['lon'].data, 'lon', aggregation=RegridType.interp_mean)
     plt.figure()
-    new_tas.isel(time=0,ssp=-1, realization=0).plot()
+    new_tas.isel(time=0).plot()
     plt.figure()
-    tas.isel(time=0,ssp=-1, realization=0).plot()
+    tas.isel(time=0).plot()
     plt.show()
 
 
@@ -79,9 +77,9 @@ def main():
     new_tasmax = regrid_1d(new_tasmax, pop['lat'].data, 'lat', aggregation=RegridType.interp_mean)
     new_tasmax = regrid_1d(new_tasmax, pop['lon'].data, 'lon', aggregation=RegridType.interp_mean)
     plt.figure()
-    new_tasmax.isel(time=0,ssp=-1, realization=0).plot()
+    new_tasmax.isel(time=0).plot()
     plt.figure()
-    tasmax.isel(time=0,ssp=-1, realization=0).plot()
+    tasmax.isel(time=0).plot()
     plt.show()
 
     
@@ -91,16 +89,16 @@ def main():
 
     #plot old vs new population (clip old population to match bounds of new population)
     plt.figure()
-    old_pop = pop.isel(time=0,ssp=-1).sel(lat=slice(new_pop['lat'].max(), new_pop['lat'].min()), lon=slice(new_pop['lon'].min(), new_pop['lon'].max()))
+    old_pop = pop.isel(time=0).sel(lat=slice(new_pop['lat'].max(), new_pop['lat'].min()), lon=slice(new_pop['lon'].min(), new_pop['lon'].max()))
     plt.imshow(np.log(old_pop + 1e-6))
     # plt.imshow(old_pop)
 
     plt.figure()
-    plt.imshow(np.log(new_pop.isel(time=0,ssp=-1) + 1e-6))
-    # plt.imshow(new_pop.isel(time=0,ssp=-1))
+    plt.imshow(np.log(new_pop.isel(time=0) + 1e-6))
+    # plt.imshow(new_pop.isel(time=0))
     
     old_pop_count = np.nansum(old_pop)
-    new_pop_count = np.nansum(new_pop.isel(time=0,ssp=-1))
+    new_pop_count = np.nansum(new_pop.isel(time=0))
     print(f'comparing pop count: {old_pop_count=} vs {new_pop_count=}. Error: {np.abs(old_pop_count - new_pop_count) / old_pop_count:.4%}')
 
     plt.show()
@@ -112,16 +110,16 @@ def main():
 
     #plot old vs new population (clip old population to match bounds of new population)
     plt.figure()
-    old_pop = pop.isel(time=0,ssp=-1).sel(lat=slice(new_pop['lat'].min(), new_pop['lat'].max(),-1), lon=slice(new_pop['lon'].min(), new_pop['lon'].max()))
+    old_pop = pop.isel(time=0).sel(lat=slice(new_pop['lat'].min(), new_pop['lat'].max(),-1), lon=slice(new_pop['lon'].min(), new_pop['lon'].max()))
     plt.imshow(np.log(old_pop + 1e-6), origin='lower')
     # plt.imshow(old_pop, origin='lower')
 
     plt.figure()
-    plt.imshow(np.log(new_pop.isel(time=0,ssp=-1) + 1e-6), origin='lower')
-    # plt.imshow(new_pop.isel(time=0,ssp=-1), origin='lower')
+    plt.imshow(np.log(new_pop.isel(time=0) + 1e-6), origin='lower')
+    # plt.imshow(new_pop.isel(time=0), origin='lower')
 
     old_pop_count = np.nansum(old_pop)
-    new_pop_count = np.nansum(new_pop.isel(time=0,ssp=-1))
+    new_pop_count = np.nansum(new_pop.isel(time=0))
     print(f'comparing pop count: {old_pop_count=} vs {new_pop_count=}. Error: {np.abs(old_pop_count - new_pop_count) / old_pop_count:.4%}')
 
     plt.show()
