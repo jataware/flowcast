@@ -144,6 +144,7 @@ def regrid_1d(
         offset:BinOffset=BinOffset.left,
         aggregation=RegridType.interp_mean,
         wrap:tuple[float,float]=None, #TBD format for this...
+        low_memory:bool=False,
     ) -> xr.DataArray:
     
     # grab the old coords and data (copy data so we don't modify the original)
@@ -195,7 +196,7 @@ def regrid_1d(
         old_data[~validmask] = float('-inf')
 
     #perform the regridding on the data, and replace any nans
-    result = regrid_1d_reducer(old_data, overlaps, aggregation)
+    result = regrid_1d_reducer(old_data, overlaps, aggregation, low_memory)
     replace_nans(result, validmask, overlaps)
 
     # move the dimension back to its original position
@@ -213,10 +214,17 @@ def regrid_1d(
 
 
 
-def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:RegridType) -> np.ndarray:
+def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:RegridType, low_memory:bool=False) -> np.ndarray:
     """
     Perform the actual regridding reduction over the output bins, according to the aggregation method
     """
+    
+    # low memory mode uses less memory, but is less accurate
+    if low_memory:
+        old_data = old_data.astype(np.float32)
+        overlaps = overlaps.astype(np.float32)
+
+
     overlap_mask = overlaps > 0
     cols = np.any(overlap_mask, axis=0)
     starts = overlap_mask.argmax(axis=0)

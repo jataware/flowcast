@@ -208,7 +208,7 @@ _P = ParamSpec("_P")
 class Pipeline:
 
 
-    def __init__(self, *, verbose:bool=True):
+    def __init__(self, *, verbose:bool=True, low_memory:bool=False):
         
         # dynamic settings for data to be used in pipeline
         self.resolution: Resolution|str|None = None
@@ -231,6 +231,9 @@ class Pipeline:
 
         # whether to print out debug info during pipeline execution
         self.verbose = verbose
+
+        # whether to use low memory mode
+        self.low_memory = low_memory
 
         # bind the current instance to all unwrapped compiled methods (so we don't need to pass the instance manually)
         for attr_name, attr_value in vars(Pipeline).items():
@@ -493,7 +496,7 @@ class Pipeline:
             times = np.array([DatetimeNoLeap(year, 1, 1) for year in range(min_time.year, max_time.year+1, 10)])
 
         # regrid the data and save the result to the pipeline namespace
-        new_data = regrid_1d(var.data, times, 'time', aggregation=var.time_regrid_type)
+        new_data = regrid_1d(var.data, times, 'time', aggregation=var.time_regrid_type, low_memory=self.low_memory)
         var = PipelineVariable.from_result(new_data, var, frequency=target)
         self.bind_value(y, var)
 
@@ -518,7 +521,7 @@ class Pipeline:
             self.bind_value(y, var)
             return
 
-        new_data = regrid_1d(var.data, target_var.data.time.data, 'time', aggregation=var.time_regrid_type)
+        new_data = regrid_1d(var.data, target_var.data.time.data, 'time', aggregation=var.time_regrid_type, low_memory=self.low_memory)
         var = PipelineVariable.from_result(new_data, var, frequency=target_var.frequency)
         self.bind_value(y, var)
 
@@ -552,8 +555,8 @@ class Pipeline:
         lons = lons[(lons + target.dx/2 >= min_lon) & (lons - target.dx/2 <= max_lon)]
 
         # regrid the data and save the result to the pipeline namespace
-        new_data = regrid_1d(var.data, lats, 'lat', aggregation=var.geo_regrid_type)
-        new_data = regrid_1d(new_data, lons, 'lon', aggregation=var.geo_regrid_type)
+        new_data = regrid_1d(var.data, lats, 'lat', aggregation=var.geo_regrid_type, low_memory=self.low_memory)
+        new_data = regrid_1d(new_data, lons, 'lon', aggregation=var.geo_regrid_type, low_memory=self.low_memory)
         var = PipelineVariable.from_result(new_data, var, resolution=target)
         self.bind_value(y, var)
     
@@ -571,8 +574,8 @@ class Pipeline:
         var = self.get_value(x)
         target_var = self.get_value(target)
 
-        new_data = regrid_1d(var.data, target_var.data.lat.data, 'lat', aggregation=var.geo_regrid_type)
-        new_data = regrid_1d(new_data, target_var.data.lon.data, 'lon', aggregation=var.geo_regrid_type)
+        new_data = regrid_1d(var.data, target_var.data.lat.data, 'lat', aggregation=var.geo_regrid_type, low_memory=self.low_memory)
+        new_data = regrid_1d(new_data, target_var.data.lon.data, 'lon', aggregation=var.geo_regrid_type, low_memory=self.low_memory)
         var = PipelineVariable.from_result(new_data, var, resolution=target_var.resolution)
         self.bind_value(y, var)
 
@@ -790,15 +793,16 @@ def heat_scenario():
 def crop_scenario():
     from data import Realization, Scenario, Model, CMIP6Data, OtherData
 
-    pipe = Pipeline()
-    pipe.set_geo_resolution('land_cover')
+    pipe = Pipeline(low_memory=True)
+    pipe.set_geo_resolution('modis')
     pipe.set_time_resolution(Frequency.monthly)
+    
+    pipe.load('raw_modis', OtherData.land_cover())
+    pipe.fixed_geo_regrid('modis', 'raw_modis', Resolution(0.1, 0.1))
     pipe.load('tas', CMIP6Data.tas(realization=Realization.r1i1p1f1, scenario=Scenario.ssp585, model=Model.FGOALS_f3_L))
-    # pipe.load('pr', CMIP6Data.pr(realization=Realization.r1i1p1f1, scenario=Scenario.ssp585, model=Model.FGOALS_f3_L))
-    pipe.load('land_cover', OtherData.land_cover())
+    pipe.load('pr', CMIP6Data.pr(realization=Realization.r1i1p1f1, scenario=Scenario.ssp585, model=Model.FGOALS_f3_L))
 
-    pipe.threshold('test1', 'tas', Threshold(308.15, ThresholdType.greater_than))
-    # pipe.threshold('test2', 'pr', Threshold(0.1, ThresholdType.greater_than))
+    pipe.multiply('test', 'pr', 'tas')
 
     pipe.execute()
 
