@@ -788,15 +788,22 @@ def heat_scenario():
 
 
 def crop_scenario():
-    pipe = Pipeline(
-        realizations=Realization.r1i1p1f1,
-        scenarios=[Scenario.ssp126, Scenario.ssp245, Scenario.ssp370, Scenario.ssp585],
-    )
-    pipe.set_geo_resolution(Resolution(0.5, 0.5))
+    from data import Realization, Scenario, Model, CMIP6Data, OtherData
+
+    pipe = Pipeline()
+    pipe.set_geo_resolution('land_cover')
     pipe.set_time_resolution(Frequency.monthly)
-    pipe.load('tas', CMIP6Data.tas, Model.FGOALS_f3_L)
-    pipe.load('pr', CMIP6Data.pr, Model.FGOALS_f3_L)
-    pipe.load('land_cover', OtherData.land_cover)
+    pipe.load('tas', CMIP6Data.tas(realization=Realization.r1i1p1f1, scenario=Scenario.ssp585, model=Model.FGOALS_f3_L))
+    # pipe.load('pr', CMIP6Data.pr(realization=Realization.r1i1p1f1, scenario=Scenario.ssp585, model=Model.FGOALS_f3_L))
+    pipe.load('land_cover', OtherData.land_cover())
+
+    pipe.threshold('test1', 'tas', Threshold(308.15, ThresholdType.greater_than))
+    # pipe.threshold('test2', 'pr', Threshold(0.1, ThresholdType.greater_than))
+
+    pipe.execute()
+
+    pdb.set_trace()
+
 
     #TODO: rest of scenario
 
@@ -835,5 +842,5 @@ def demo_scenario():
 
 if __name__ == '__main__':
     # heat_scenario()
-    # crop_scenario()
-    demo_scenario()
+    crop_scenario()
+    # demo_scenario()

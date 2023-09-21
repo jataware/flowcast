@@ -177,6 +177,11 @@ def regrid_1d(
     if original_dim_idx != len(data.dims) - 1:
         old_data = np.moveaxis(old_data, original_dim_idx, -1)
 
+    # crop out of bounds data from old data/overlaps
+    unused_rows = np.all(overlaps == 0, axis=1)
+    old_data = old_data[..., ~unused_rows]
+    overlaps = overlaps[~unused_rows]
+
     #ensure the data is contiguous in memory
     old_data = np.ascontiguousarray(old_data)
     overlaps = np.ascontiguousarray(overlaps)
