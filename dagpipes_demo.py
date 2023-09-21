@@ -3,13 +3,18 @@ from __future__ import annotations
 import json
 from collections import defaultdict, deque
 from typing import TypedDict
-from dynamic_insights import Pipeline, Realization, Scenario, CMIP6Data, OtherData, Threshold, ThresholdType, Model
+from dynamic_insights import Pipeline, Threshold, ThresholdType
+from data import Realization, Scenario, CMIP6Data, OtherData, Model
 from matplotlib import pyplot as plt
 import pdb
 
 
 
 def main():
+    # some global settings for cmip6 data loaded
+    realization=Realization.r1i1p1f1
+    scenario=Scenario.ssp585
+
     # load the DAG from the json file
     with open('input.json') as f:
         graph = json.loads(f.read())
@@ -18,7 +23,7 @@ def main():
     topological_sort(graph)
 
     # create the pipeline
-    pipe = Pipeline(realizations=Realization.r1i1p1f1, scenarios=Scenario.ssp585)
+    pipe = Pipeline()
 
     #keep track of nodes to plot
     nodes_to_plot: list[tuple[str,str]] = []
@@ -28,17 +33,27 @@ def main():
         print(node['id'], node['type'])
         
         if node['type'] == 'load':
-            try:
-                var = CMIP6Data(node['data']['input'].replace(' ', '_'))
-            except ValueError:
-                var = OtherData(node['data']['input'].replace(' ', '_'))
-            
-            pipe.load(node['id'], var, Model.CAS_ESM2_0)
+            name = node['data']['input'].replace(' ', '_')
+            if name == 'land_cover':
+                loader = OtherData.land_cover()
+            elif name == 'population':
+                loader = OtherData.population(scenario=scenario)
+            elif name == 'tasmax':
+                loader = CMIP6Data.tasmax(realization=realization, scenario=scenario, model=Model.CAS_ESM2_0)
+            elif name == 'tas':
+                loader = CMIP6Data.tas(realization=realization, scenario=scenario, model=Model.FGOALS_f3_L)
+            elif name == 'pr':
+                loader = CMIP6Data.pr(realization=realization, scenario=scenario, model=Model.FGOALS_f3_L)
+            else:
+                raise ValueError(f'Unknown data type {name}')
+
+            # add the step to the pipeline            
+            pipe.load(node['id'], loader)
 
             #HACK for setting target geo/temporal resolution demo
-            if var == OtherData.land_cover:
+            if name == 'land_cover':
                 pipe.set_geo_resolution(node['id'])
-            elif var == OtherData.population:
+            elif name == 'population':
                 pipe.set_time_resolution(node['id'])
 
             continue
