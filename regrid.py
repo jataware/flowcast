@@ -21,10 +21,26 @@ class RegridType(Enum):
     mean = auto()
     median = auto()
     mode = auto()
-    interp_mean = auto() # interp if increasing resolution, mean if decreasing resolution
+    interp_mean = auto()
     nearest = auto()
 
+# which methods weight the values of the bins on reduction
+float_weighted_reduction_methods: set[RegridType] = {
+    RegridType.mean,
+    RegridType.interp_mean,
+    RegridType.conserve,
+}
 
+# which methods take all values of bind unmodified on reduction 
+boolean_reduction_methods: set[RegridType] = {
+    RegridType.min,
+    RegridType.max,
+    RegridType.median,
+    RegridType.mode,
+    RegridType.nearest,
+}
+
+assert all(method in float_weighted_reduction_methods or method in boolean_reduction_methods for method in RegridType), 'Some regrid methods are not accounted for in the float_weighted_reduction_methods or boolean_reduction_methods sets'
 
 
 def compute_overlap(a: np.ndarray, b: np.ndarray) -> np.ndarray:
@@ -214,15 +230,19 @@ def regrid_1d(
 
 
 
+
+
+from dask import array as da
+@profile
 def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:RegridType, low_memory:bool=False) -> np.ndarray:
     """
     Perform the actual regridding reduction over the output bins, according to the aggregation method
     """
     
     # low memory mode uses less memory, but is less accurate
-    if low_memory:
-        old_data = old_data.astype(np.float32)
-        overlaps = overlaps.astype(np.float32)
+    # if low_memory:
+    #     old_data = old_data.astype(np.float32)
+    #     overlaps = overlaps.astype(np.float32)
 
 
     overlap_mask = overlaps > 0
@@ -252,42 +272,34 @@ def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Regr
     #construct a matrix holding all the input values for each bin in the output
     unmasked_binned_data = old_data[..., col_selector]
     
+    if aggregation in float_weighted_reduction_methods:
+        # weight values in the bin before aggregating
+        bin_mask = overlaps[col_selector, row_selector]
+    else:
+        # take all values in the bin unmodified for aggregation
+        bin_mask = overlap_mask[col_selector, row_selector]
+    
+    # mask (or weight) the sets of values in the bins
+    binned_data = unmasked_binned_data * bin_mask
+
+    # chunk the data with dask
+    binned_data = da.from_array(binned_data, chunks=(100,) * (binned_data.ndim - 1) + (max_col_length,))
+
     # perform reduction over bins according to aggregation method
     if aggregation == RegridType.min:
-        bin_mask = overlap_mask[col_selector, row_selector]
-        binned_data = unmasked_binned_data * bin_mask
-        result = np.nanmin(binned_data, axis=-1)
-
+        result = da.nanmin(binned_data, axis=-1)
     elif aggregation == RegridType.max:
-        bin_mask = overlap_mask[col_selector, row_selector]
-        binned_data = unmasked_binned_data * bin_mask
-        result = np.nanmax(binned_data, axis=-1)
-
+        result = da.nanmax(binned_data, axis=-1)
     elif aggregation == RegridType.mean or aggregation == RegridType.interp_mean:
-        bin_mask = overlaps[col_selector, row_selector]
-        binned_data = unmasked_binned_data * bin_mask
-        result = np.nansum(binned_data, axis=-1) / np.nansum(bin_mask, axis=-1)
-
+        result = da.nansum(binned_data, axis=-1) / da.nansum(bin_mask, axis=-1)
     elif aggregation == RegridType.median:
-        bin_mask = overlap_mask[col_selector, row_selector]
-        binned_data = unmasked_binned_data * bin_mask
-        result = np.nanmedian(binned_data, axis=-1)
-
+        result = da.nanmedian(binned_data, axis=-1)
     elif aggregation == RegridType.mode:
-        bin_mask = overlap_mask[col_selector, row_selector]
-        binned_data = unmasked_binned_data * bin_mask
         result = stats.mode(binned_data, axis=-1, nan_policy='omit', keepdims=False)[0]
-
     elif aggregation == RegridType.nearest:
-        bin_mask = overlap_mask[col_selector, row_selector]
-        binned_data = unmasked_binned_data * bin_mask
         result = binned_data[..., 0] # select the only value in each bin
-
     elif aggregation == RegridType.conserve:
-        bin_mask = overlaps[col_selector, row_selector]
-        binned_data = unmasked_binned_data * bin_mask
-        result = np.nansum(binned_data, axis=-1)
-
+        result = da.nansum(binned_data, axis=-1)
     else:
         raise NotImplementedError(f'Unrecognized regrid aggregation method: {aggregation}. Expected one of: {[*RegridType.__members__.values()]}')
 
