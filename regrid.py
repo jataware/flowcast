@@ -6,6 +6,7 @@ from scipy import stats
 import xarray as xr
 from warnings import warn
 from spacetime import datetimeNoLeap_to_epoch
+from dask import array as da
 
 
 
@@ -232,18 +233,15 @@ def regrid_1d(
 
 
 
-from dask import array as da
-@profile
 def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:RegridType, low_memory:bool=False) -> np.ndarray:
     """
     Perform the actual regridding reduction over the output bins, according to the aggregation method
     """
     
     # low memory mode uses less memory, but is less accurate
-    # if low_memory:
-    #     old_data = old_data.astype(np.float32)
-    #     overlaps = overlaps.astype(np.float32)
-
+    if low_memory:
+        old_data = old_data.astype(np.float32)
+        overlaps = overlaps.astype(np.float32)
 
     overlap_mask = overlaps > 0
     cols = np.any(overlap_mask, axis=0)
@@ -283,7 +281,10 @@ def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Regr
     binned_data = unmasked_binned_data * bin_mask
 
     # chunk the data with dask
-    binned_data = da.from_array(binned_data, chunks=(100,) * (binned_data.ndim - 1) + (max_col_length,))
+    # if low_memory:
+    #     binned_data = da.from_array(binned_data, chunks=(16,) * (binned_data.ndim - 1) + (max_col_length,))
+    # else:
+    #     binned_data = da.from_array(binned_data)
 
     # perform reduction over bins according to aggregation method
     if aggregation == RegridType.min:
@@ -296,12 +297,15 @@ def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Regr
         result = da.nanmedian(binned_data, axis=-1)
     elif aggregation == RegridType.mode:
         result = stats.mode(binned_data, axis=-1, nan_policy='omit', keepdims=False)[0]
+        # result = da.from_array(result)
     elif aggregation == RegridType.nearest:
         result = binned_data[..., 0] # select the only value in each bin
     elif aggregation == RegridType.conserve:
         result = da.nansum(binned_data, axis=-1)
     else:
         raise NotImplementedError(f'Unrecognized regrid aggregation method: {aggregation}. Expected one of: {[*RegridType.__members__.values()]}')
+
+    # result = result.compute()
 
     return result
     

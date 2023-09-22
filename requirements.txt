@@ -8,3 +8,4 @@ typing-extensions
 rich
 netCDF4
 nc-time-axis
+dask

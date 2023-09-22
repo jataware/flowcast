@@ -798,7 +798,7 @@ def crop_scenario():
     pipe.set_time_resolution(Frequency.monthly)
     
     pipe.load('raw_modis', OtherData.land_cover())
-    pipe.fixed_geo_regrid('modis', 'raw_modis', Resolution(0.1, 0.1))
+    pipe.fixed_geo_regrid('modis', 'raw_modis', Resolution(0.2, 0.2))
     pipe.load('tas', CMIP6Data.tas(realization=Realization.r1i1p1f1, scenario=Scenario.ssp585, model=Model.FGOALS_f3_L))
     pipe.load('pr', CMIP6Data.pr(realization=Realization.r1i1p1f1, scenario=Scenario.ssp585, model=Model.FGOALS_f3_L))
 
