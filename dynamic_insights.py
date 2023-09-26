@@ -709,6 +709,7 @@ class Pipeline:
         result = var.data.isel(indexers=indexers, drop=drop)
         self.bind_value(y, PipelineVariable.from_result(result, var))
 
+    # def where(self, y:ResultID, x:OperandID, /, cond:Union[xr.DataArray, str], other:Union[xr.DataArray, str]):
 
     @compile
     def country_split(self, y:ResultID, x:OperandID, /, countries:list[str]):
@@ -779,7 +780,14 @@ class Pipeline:
         """
         var = self.get_value(x)
         result = var.data.sum(dim=dims)
-        self.bind_value(y, PipelineVariable.from_result(result, var))      
+        self.bind_value(y, PipelineVariable.from_result(result, var))
+
+    #def mean_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
+    #def max_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
+    #def min_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
+    #def std_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
+    #def median_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
+    #def mode_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
 
 
     @compile
