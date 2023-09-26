@@ -35,8 +35,8 @@ def main():
 
     
     # convert modis to the goe resolution of tasmax
-    new_modis = regrid_1d(modis, tasmax['lat'].data, 'lat', aggregation=RegridType.mode)
-    new_modis = regrid_1d(new_modis, tasmax['lon'].data, 'lon', aggregation=RegridType.mode)
+    new_modis = regrid_1d(modis, tasmax['lat'].data, 'lat', aggregation=RegridType.nearest_or_mode)
+    new_modis = regrid_1d(new_modis, tasmax['lon'].data, 'lon', aggregation=RegridType.nearest_or_mode)
     plt.figure()
     new_modis.plot()
     plt.figure()

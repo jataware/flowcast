@@ -92,7 +92,7 @@ class OtherData(DataLoader):
         modis['time'] = modis.indexes['time'].to_datetimeindex().map(lambda dt: DatetimeNoLeap(dt.year, dt.month, dt.day))
         modis = modis.drop(['crs'])
 
-        return Variable(modis, TimeRegridType.nearest, GeoRegridType.nearest)
+        return Variable(modis, TimeRegridType.nearest_or_mode, GeoRegridType.nearest_or_mode)
 
     
 class CMIP6Data(DataLoader):

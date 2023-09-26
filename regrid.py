@@ -22,8 +22,7 @@ class RegridType(Enum):
     median = auto()
     mode = auto()
     interp_or_mean = auto()
-    nearest = auto() #TODO: consider converting to nearest_or_mode
-
+    nearest_or_mode = auto()
 
 # which methods weight the values of the bins on reduction
 float_weighted_reduction_methods: set[RegridType] = {
@@ -38,7 +37,7 @@ boolean_reduction_methods: set[RegridType] = {
     RegridType.max,
     RegridType.median,
     RegridType.mode,
-    RegridType.nearest,
+    RegridType.nearest_or_mode,
 }
 
 assert all(method in float_weighted_reduction_methods or method in boolean_reduction_methods for method in RegridType), 'Some regrid methods are not accounted for in the float_weighted_reduction_methods or boolean_reduction_methods sets'
@@ -74,19 +73,28 @@ def compute_overlap(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return np.ascontiguousarray(overlap, dtype=np.float64)
 
 
-def get_interp_mean_overlaps(overlaps:np.ndarray, old_coords:np.ndarray, new_coords:np.ndarray) -> np.ndarray:
+def is_resolution_increase(overlaps:np.ndarray, inclusive:bool=False) -> bool:
+    """
+    Determine whether the resolution is increasing or decreasing based on the overlaps matrix
+    """
+    nonzero_indices = np.nonzero(overlaps)
+    old_size = nonzero_indices[0].max() - nonzero_indices[0].min()
+    new_size = nonzero_indices[1].max() - nonzero_indices[1].min()
+
+    if inclusive:
+        return new_size >= old_size
+    else:
+        return new_size > old_size
+
+def get_interp_or_mean_overlaps(overlaps:np.ndarray, old_coords:np.ndarray, new_coords:np.ndarray) -> np.ndarray:
     """
     Convert the overlaps matrix to one that will perform:
     - interpolation for resolution increases
     - mean aggregation for resolution decreases
     """
 
-    # determine if the resolution is increasing or decreasing
-    nonzero_indices = np.nonzero(overlaps)
-    old_size = nonzero_indices[0].max() - nonzero_indices[0].min()
-    new_size = nonzero_indices[1].max() - nonzero_indices[1].min()
-    if new_size <= old_size:
-        # resolution decrease just uses existing overlaps matrix
+    # resolution decrease just uses existing overlaps matrix
+    if not is_resolution_increase(overlaps):
         return overlaps
 
     # compute the distances from each old cell to each new cell
@@ -99,7 +107,6 @@ def get_interp_mean_overlaps(overlaps:np.ndarray, old_coords:np.ndarray, new_coo
     #invert the distances so the closest cell has the largest weight
     distances = np.nansum(distances, axis=0)[None] - distances
 
-
     # normalize so that each column sums up to 1
     distances_sum = np.nansum(distances, axis=0)
     distances[:, distances_sum > 0] /= distances_sum[distances_sum > 0]
@@ -109,10 +116,17 @@ def get_interp_mean_overlaps(overlaps:np.ndarray, old_coords:np.ndarray, new_coo
 
     return distances
 
-def get_nearest_overlaps(old_coords:np.ndarray, new_coords:np.ndarray) -> np.ndarray:
+def get_nearest_or_mode_overlaps(overlaps:np.ndarray, old_coords:np.ndarray, new_coords:np.ndarray) -> np.ndarray:
     """
     Get an overlaps matrix that just selects the item nearest to the location of the new bin
+    - nearest neighbor for resolution increases
+    - mode aggregation for resolution decreases
     """
+    
+    # resolution decrease just uses existing overlaps matrix
+    if not is_resolution_increase(overlaps):
+        return overlaps
+
     # compute the distances from each old cell to each new cell
     distances = np.abs(old_coords[:, None] - new_coords[None, :])
 
@@ -186,9 +200,9 @@ def regrid_1d(
 
     # handle aggregation methods that use a modified overlaps matrix
     if aggregation == RegridType.interp_or_mean:
-        overlaps = get_interp_mean_overlaps(overlaps, old_coords, new_coords)
-    elif aggregation == RegridType.nearest:
-        overlaps = get_nearest_overlaps(old_coords, new_coords)
+        overlaps = get_interp_or_mean_overlaps(overlaps, old_coords, new_coords)
+    elif aggregation == RegridType.nearest_or_mode:
+        overlaps = get_nearest_or_mode_overlaps(overlaps, old_coords, new_coords)
 
     # ensure the dimension being operated on is the last one
     original_dim_idx = data.dims.index(dim)
@@ -209,7 +223,8 @@ def regrid_1d(
     old_data[~validmask] = 0
 
     # hacky way to deal with nans not propagating correctly under mode aggregation
-    if aggregation == RegridType.mode:
+    # TODO: is this correct for nearest interpolation?
+    if aggregation == RegridType.mode or aggregation == RegridType.nearest_or_mode:
         old_data[~validmask] = float('-inf')
 
     #perform the regridding on the data, and replace any nans
@@ -291,8 +306,11 @@ def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Regr
         result = np.nanmedian(binned_data, axis=-1)
     elif aggregation == RegridType.mode:
         result = stats.mode(binned_data, axis=-1, nan_policy='omit', keepdims=False)[0]
-    elif aggregation == RegridType.nearest:
-        result = binned_data[..., 0] # select the only value in each bin
+    elif aggregation == RegridType.nearest_or_mode:
+        if binned_data.shape[-1] == 1:  # select the only value in each bin
+            result = binned_data[..., 0]
+        else:
+            result = stats.mode(binned_data, axis=-1, nan_policy='omit', keepdims=False)[0]
     elif aggregation == RegridType.conserve:
         result = np.nansum(binned_data, axis=-1)
     else:
