@@ -71,7 +71,7 @@ def main():
         if node['type'] == 'sum':
             parent, = get_node_parents(node['id'], graph, num_expected=1)
             dims = [dim for dim in  ['lat', 'lon', 'time', 'country', 'scenario', 'realization'] if node['data']['input'][dim]]
-            pipe.sum(node['id'], parent, dims)
+            pipe.sum_reduce(node['id'], parent, dims)
             continue
 
         if node['type'] == 'save':

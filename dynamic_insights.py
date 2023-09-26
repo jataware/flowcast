@@ -115,7 +115,7 @@ import re
 from itertools import count
 from inspect import signature, Signature
 from enum import Enum, auto
-from typing import Any, Callable, TypeVar #, Protocol
+from typing import Any, Callable, TypeVar, Mapping #, Protocol
 from typing_extensions import ParamSpec
 from types import MethodType
 from dataclasses import dataclass
@@ -619,6 +619,55 @@ class Pipeline:
         return x
     
 
+    def binop(self, y:ResultID, x1:OperandID, x2:OperandID, op:Callable[[xr.DataArray, xr.DataArray], xr.DataArray], /):
+        """
+        Perform a binary operation on two datasets, e.g. `y = x1 + x2`
+
+        Args:
+            y (str): the identifier to bind the result to in the pipeline namespace
+            x1 (str): the identifier of the left operand
+            x2 (str): the identifier of the right operand
+            op (Callable[[xr.DataArray, xr.DataArray], xr.DataArray]): the binary operation to perform
+        """
+
+        #ensure data matches the specified resolution and frequency
+        x1 = self.auto_regrid(x1)
+        x2 = self.auto_regrid(x2)
+
+        # perform the operation
+        var1 = self.get_value(x1)
+        var2 = self.get_value(x2)
+        result = op(var1.data, var2.data)
+
+        # save the result to the pipeline namespace
+        self.bind_value(y, PipelineVariable.from_result(result, var1))
+    
+    @compile
+    def add(self, y:ResultID, x1:OperandID, x2:OperandID, /):
+        """
+        Add two datasets together, i.e. `y = x1 + x2`
+
+        Args:
+            y (str): the identifier to bind the result to in the pipeline namespace
+            x1 (str): the identifier of the left operand
+            x2 (str): the identifier of the right operand
+        """
+        self.binop(y, x1, x2, lambda x1, x2: x1 + x2)
+
+
+    @compile
+    def subtract(self, y:ResultID, x1:OperandID, x2:OperandID, /):
+        """
+        Subtract two datasets, i.e. `y = x1 - x2`
+
+        Args:
+            y (str): the identifier to bind the result to in the pipeline namespace
+            x1 (str): the identifier of the left operand
+            x2 (str): the identifier of the right operand
+        """
+        self.binop(y, x1, x2, lambda x1, x2: x1 - x2)
+
+
     @compile
     def multiply(self, y:ResultID, x1:OperandID, x2:OperandID, /):
         """
@@ -629,19 +678,37 @@ class Pipeline:
             x1 (str): the identifier of the left operand
             x2 (str): the identifier of the right operand
         """
+        self.binop(y, x1, x2, lambda x1, x2: x1 * x2)
 
-        #ensure data matches the specified resolution and frequency
-        x1 = self.auto_regrid(x1)
-        x2 = self.auto_regrid(x2)
 
-        # perform the multiplication
-        var1 = self.get_value(x1)
-        var2 = self.get_value(x2)
-        result = var1.data * var2.data
+    @compile
+    def divide(self, y:ResultID, x1:OperandID, x2:OperandID, /):
+        """
+        Divide two datasets, i.e. `y = x1 / x2`
 
-        # save the result to the pipeline namespace
-        self.bind_value(y, PipelineVariable.from_result(result, var1))
-    
+        Args:
+            y (str): the identifier to bind the result to in the pipeline namespace
+            x1 (str): the identifier of the left operand
+            x2 (str): the identifier of the right operand
+        """
+        self.binop(y, x1, x2, lambda x1, x2: x1 / x2)
+
+    @compile
+    def isel(self, y:ResultID, x:OperandID, /, indexers:Mapping[Any, Any]|None=None, drop:bool=False):
+        """
+        Perform an isel operation on the given data. 
+        See: https://xarray.pydata.org/en/stable/generated/xarray.DataArray.isel.html
+
+        Args:
+            y (str): the identifier to bind the result to in the pipeline namespace
+            x (str): the identifier of the data to perform the isel operation on
+            indexers (Mapping[Any, Any], optional): A dict with keys matching dimensions and values given by integers, slice objects or arrays. indexer can be a integer, slice, array-like or DataArray. Defaults to None.
+            drop (bool, optional): Drop coordinates variables indexed by integers instead of making them scalar. Defaults to False.
+        """
+        var = self.get_value(x)
+        result = var.data.isel(indexers=indexers, drop=drop)
+        self.bind_value(y, PipelineVariable.from_result(result, var))
+
 
     @compile
     def country_split(self, y:ResultID, x:OperandID, /, countries:list[str]):
@@ -701,7 +768,7 @@ class Pipeline:
         self.bind_value(y, PipelineVariable.from_result(out_data, var))
 
     @compile
-    def sum(self, y:ResultID, x:OperandID, /, dims:list[str]):
+    def sum_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
         """
         Sum the data along the given dimensions
 
@@ -769,7 +836,7 @@ def heat_scenario():
     pipe.threshold('heat', 'tasmax', Threshold(308.15, ThresholdType.greater_than))
     pipe.multiply('exposure0', 'heat', 'pop')
     pipe.country_split('exposure1', 'exposure0', ['China', 'India', 'United States', 'Canada', 'Mexico', 'Brazil', 'Australia'])
-    pipe.sum('exposure2', 'exposure1', dims=['lat', 'lon'])
+    pipe.sum_reduce('exposure2', 'exposure1', dims=['lat', 'lon'])
     pipe.save('exposure2', 'exposure.nc')
 
     # run the pipeline
@@ -802,7 +869,9 @@ def crop_scenario():
     pipe.load('tas', CMIP6Data.tas(realization=Realization.r1i1p1f1, scenario=Scenario.ssp585, model=Model.FGOALS_f3_L))
     pipe.load('pr', CMIP6Data.pr(realization=Realization.r1i1p1f1, scenario=Scenario.ssp585, model=Model.FGOALS_f3_L))
 
-    pipe.multiply('test', 'pr', 'tas')
+
+    #tas_mean = tas
+
 
     pipe.execute()
 
@@ -827,8 +896,8 @@ def demo_scenario():
     pipe.threshold('not_urban_mask', 'modis', Threshold(13, ThresholdType.not_equal))
     pipe.multiply('urban_exposure', 'exposure0', 'urban_mask')
     pipe.multiply('not_urban_exposure', 'exposure0', 'not_urban_mask')
-    pipe.sum('global_urban_exposure', 'urban_exposure', dims=['lat', 'lon'])
-    pipe.sum('global_not_urban_exposure', 'not_urban_exposure', dims=['lat', 'lon'])
+    pipe.sum_reduce('global_urban_exposure', 'urban_exposure', dims=['lat', 'lon'])
+    pipe.sum_reduce('global_not_urban_exposure', 'not_urban_exposure', dims=['lat', 'lon'])
     pipe.save('global_urban_exposure', 'global_urban_exposure.nc')
     pipe.save('global_not_urban_exposure', 'global_not_urban_exposure.nc')
 
