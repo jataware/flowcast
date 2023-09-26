@@ -90,10 +90,6 @@ class OtherData(DataLoader):
         modis = xr.open_dataset('data/MODIS/land-use-5km.nc')
         modis = modis['LC_Type1']
         modis['time'] = modis.indexes['time'].to_datetimeindex().map(lambda dt: DatetimeNoLeap(dt.year, dt.month, dt.day))
-        
-        #TODO: handling modis over time? for now just take a single frame
-        #probably add a dynamic insights slice node to handle this
-        # modis = modis.isel(time=0).drop(['time', 'crs'])
         modis = modis.drop(['crs'])
 
         return Variable(modis, TimeRegridType.nearest, GeoRegridType.nearest)
