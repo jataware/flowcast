@@ -20,7 +20,7 @@ def main():
     pipe.load('tas', CMIP6Data.tas(realization=Realization.r1i1p1f1, scenario=Scenario.ssp585, model=Model.FGOALS_f3_L))
     pipe.execute()
     pop = pipe.get_value('pop').data
-    modis = pipe.get_value('land_cover').data
+    modis = pipe.get_value('land_cover').data.isel(time=0)
     tasmax = pipe.get_value('tasmax').data
     pr = pipe.get_value('pr').data
     tas = pipe.get_value('tas').data
