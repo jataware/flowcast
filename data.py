@@ -82,7 +82,7 @@ class OtherData(DataLoader):
         data = xr.concat(all_years, dim='time')
 
         # return the result as a Variable
-        return Variable(data['population'], TimeRegridType.interp_mean, GeoRegridType.conserve)
+        return Variable(data['population'], TimeRegridType.interp_or_mean, GeoRegridType.conserve)
 
     @dataloader
     def land_cover() -> Variable:
@@ -112,19 +112,19 @@ class CMIP6Data(DataLoader):
     def tasmax(*, realization: Realization, scenario: Scenario, model:Model) -> Variable:
         """Load the tasmax data"""
         data = CMIP6Data.cmip6_loader('tasmax', model, realization, scenario)        
-        return Variable(data, TimeRegridType.max, GeoRegridType.interp_mean)
+        return Variable(data, TimeRegridType.max, GeoRegridType.interp_or_mean)
     
     @dataloader
     def tas(*, realization: Realization, scenario: Scenario, model:Model) -> Variable:
         """Load the tas data"""
         data = CMIP6Data.cmip6_loader('tas', model, realization, scenario)        
-        return Variable(data, TimeRegridType.interp_mean, GeoRegridType.interp_mean)
+        return Variable(data, TimeRegridType.interp_or_mean, GeoRegridType.interp_or_mean)
     
     @dataloader
     def pr(*, realization: Realization, scenario: Scenario, model:Model) -> Variable:
         """Load the pr data"""
         data = CMIP6Data.cmip6_loader('pr', model, realization, scenario)        
-        return Variable(data, TimeRegridType.interp_mean, GeoRegridType.interp_mean)
+        return Variable(data, TimeRegridType.interp_or_mean, GeoRegridType.interp_or_mean)
 
     #TODO: data loaders for other variables as needed
 

@@ -47,9 +47,9 @@ def main():
 
     # convert pr to yearly, and then the geo resolution of population
     time_axis = np.array([DatetimeNoLeap(year, 1, 1) for year in range(2015, 2101)])
-    new_pr = regrid_1d(pr, time_axis, 'time', aggregation=RegridType.interp_mean)
-    new_pr = regrid_1d(new_pr, pop['lat'].data, 'lat', aggregation=RegridType.interp_mean)
-    new_pr = regrid_1d(new_pr, pop['lon'].data, 'lon', aggregation=RegridType.interp_mean)
+    new_pr = regrid_1d(pr, time_axis, 'time', aggregation=RegridType.interp_or_mean)
+    new_pr = regrid_1d(new_pr, pop['lat'].data, 'lat', aggregation=RegridType.interp_or_mean)
+    new_pr = regrid_1d(new_pr, pop['lon'].data, 'lon', aggregation=RegridType.interp_or_mean)
     plt.figure()
     new_pr.isel(time=0).plot()
     plt.figure()
@@ -60,9 +60,9 @@ def main():
 
     #convert tas to yearly, and then the geo resolution of population
     time_axis = np.array([DatetimeNoLeap(year, 1, 1) for year in range(2015, 2101)])
-    new_tas = regrid_1d(tas, time_axis, 'time', aggregation=RegridType.interp_mean)
-    new_tas = regrid_1d(new_tas, pop['lat'].data, 'lat', aggregation=RegridType.interp_mean)
-    new_tas = regrid_1d(new_tas, pop['lon'].data, 'lon', aggregation=RegridType.interp_mean)
+    new_tas = regrid_1d(tas, time_axis, 'time', aggregation=RegridType.interp_or_mean)
+    new_tas = regrid_1d(new_tas, pop['lat'].data, 'lat', aggregation=RegridType.interp_or_mean)
+    new_tas = regrid_1d(new_tas, pop['lon'].data, 'lon', aggregation=RegridType.interp_or_mean)
     plt.figure()
     new_tas.isel(time=0).plot()
     plt.figure()
@@ -73,9 +73,9 @@ def main():
 
     #convert tasmax to yearly, and then the geo resolution of population
     time_axis = np.array([DatetimeNoLeap(year, 1, 1) for year in range(2015, 2101)])
-    new_tasmax = regrid_1d(tasmax, time_axis, 'time', aggregation=RegridType.interp_mean)
-    new_tasmax = regrid_1d(new_tasmax, pop['lat'].data, 'lat', aggregation=RegridType.interp_mean)
-    new_tasmax = regrid_1d(new_tasmax, pop['lon'].data, 'lon', aggregation=RegridType.interp_mean)
+    new_tasmax = regrid_1d(tasmax, time_axis, 'time', aggregation=RegridType.interp_or_mean)
+    new_tasmax = regrid_1d(new_tasmax, pop['lat'].data, 'lat', aggregation=RegridType.interp_or_mean)
+    new_tasmax = regrid_1d(new_tasmax, pop['lon'].data, 'lon', aggregation=RegridType.interp_or_mean)
     plt.figure()
     new_tasmax.isel(time=0).plot()
     plt.figure()

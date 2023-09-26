@@ -21,14 +21,14 @@ class RegridType(Enum):
     mean = auto()
     median = auto()
     mode = auto()
-    interp_mean = auto() #TODO: consider renaming to interp_or_mean
+    interp_or_mean = auto()
     nearest = auto() #TODO: consider converting to nearest_or_mode
 
 
 # which methods weight the values of the bins on reduction
 float_weighted_reduction_methods: set[RegridType] = {
     RegridType.mean,
-    RegridType.interp_mean,
+    RegridType.interp_or_mean,
     RegridType.conserve,
 }
 
@@ -159,7 +159,7 @@ def regrid_1d(
         new_coords:np.ndarray,
         dim:str,
         offset:BinOffset=BinOffset.left,
-        aggregation=RegridType.interp_mean,
+        aggregation=RegridType.interp_or_mean,
         wrap:tuple[float,float]=None, #TBD format for this...
         low_memory:bool=False,
     ) -> xr.DataArray:
@@ -185,7 +185,7 @@ def regrid_1d(
     overlaps /= np.abs(old_deltas[:, None])
 
     # handle aggregation methods that use a modified overlaps matrix
-    if aggregation == RegridType.interp_mean:
+    if aggregation == RegridType.interp_or_mean:
         overlaps = get_interp_mean_overlaps(overlaps, old_coords, new_coords)
     elif aggregation == RegridType.nearest:
         overlaps = get_nearest_overlaps(old_coords, new_coords)
@@ -285,7 +285,7 @@ def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Regr
         result = np.nanmin(binned_data, axis=-1)
     elif aggregation == RegridType.max:
         result = np.nanmax(binned_data, axis=-1)
-    elif aggregation == RegridType.mean or aggregation == RegridType.interp_mean:
+    elif aggregation == RegridType.mean or aggregation == RegridType.interp_or_mean:
         result = np.nansum(binned_data, axis=-1) / np.nansum(bin_mask, axis=-1)
     elif aggregation == RegridType.median:
         result = np.nanmedian(binned_data, axis=-1)
