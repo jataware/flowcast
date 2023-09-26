@@ -6,7 +6,6 @@ from scipy import stats
 import xarray as xr
 from warnings import warn
 from spacetime import datetimeNoLeap_to_epoch
-from dask import array as da
 
 
 
@@ -22,8 +21,9 @@ class RegridType(Enum):
     mean = auto()
     median = auto()
     mode = auto()
-    interp_mean = auto()
-    nearest = auto()
+    interp_mean = auto() #TODO: consider renaming to interp_or_mean
+    nearest = auto() #TODO: consider converting to nearest_or_mode
+
 
 # which methods weight the values of the bins on reduction
 float_weighted_reduction_methods: set[RegridType] = {
@@ -280,32 +280,23 @@ def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Regr
     # mask (or weight) the sets of values in the bins
     binned_data = unmasked_binned_data * bin_mask
 
-    # chunk the data with dask
-    # if low_memory:
-    #     binned_data = da.from_array(binned_data, chunks=(16,) * (binned_data.ndim - 1) + (max_col_length,))
-    # else:
-    #     binned_data = da.from_array(binned_data)
-
     # perform reduction over bins according to aggregation method
     if aggregation == RegridType.min:
-        result = da.nanmin(binned_data, axis=-1)
+        result = np.nanmin(binned_data, axis=-1)
     elif aggregation == RegridType.max:
-        result = da.nanmax(binned_data, axis=-1)
+        result = np.nanmax(binned_data, axis=-1)
     elif aggregation == RegridType.mean or aggregation == RegridType.interp_mean:
-        result = da.nansum(binned_data, axis=-1) / da.nansum(bin_mask, axis=-1)
+        result = np.nansum(binned_data, axis=-1) / np.nansum(bin_mask, axis=-1)
     elif aggregation == RegridType.median:
-        result = da.nanmedian(binned_data, axis=-1)
+        result = np.nanmedian(binned_data, axis=-1)
     elif aggregation == RegridType.mode:
         result = stats.mode(binned_data, axis=-1, nan_policy='omit', keepdims=False)[0]
-        # result = da.from_array(result)
     elif aggregation == RegridType.nearest:
         result = binned_data[..., 0] # select the only value in each bin
     elif aggregation == RegridType.conserve:
-        result = da.nansum(binned_data, axis=-1)
+        result = np.nansum(binned_data, axis=-1)
     else:
         raise NotImplementedError(f'Unrecognized regrid aggregation method: {aggregation}. Expected one of: {[*RegridType.__members__.values()]}')
-
-    # result = result.compute()
 
     return result
     
