@@ -93,9 +93,10 @@ class OtherData(DataLoader):
         
         #TODO: handling modis over time? for now just take a single frame
         #probably add a dynamic insights slice node to handle this
-        modis = modis.isel(time=0).drop(['time', 'crs'])
+        # modis = modis.isel(time=0).drop(['time', 'crs'])
+        modis = modis.drop(['crs'])
 
-        return Variable(modis, None, GeoRegridType.nearest)
+        return Variable(modis, TimeRegridType.nearest, GeoRegridType.nearest)
 
     
 class CMIP6Data(DataLoader):
