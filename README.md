@@ -1,5 +1,5 @@
-# Dynamic Insights
-A framework for dynamically allowing users to easily string together operations with CMIP6/related data, and create custom insights into the data.
+# Flowcast
+A framework for dynamically allowing users to easily string together operations over gridded netcdf data, and derived new insights from the data.
 
 ## Overview
 To create a dynamic insight, the user will:
@@ -57,34 +57,28 @@ steps include things like:
 The main compile-time checks performed on a pipeline are:
 - ensuring variable names are not reused (enforcing SSA)
 - ensuring geo/temporal regridding targets are set before operations that will require regridding
-- ensuring that 
 
 
 ## Example
 An example pipeline for the extreme heat scenario:
 
 ```
-# extreme heat scenario
-pipe = Pipeline(
-    realizations=Realization.r1i1p1f1, 
-    scenarios=[Scenario.ssp126, Scenario.ssp245, Scenario.ssp370, Scenario.ssp585],
-)
+# extreme heat scenario: how many people will be exposed to extreme heat events (e.g., heatwaves) in the future?
+pipe = Pipeline()
+    
+# set geo/temporal resolution targets for operations in the pipeline
+pipe.set_geo_resolution('pop')
+pipe.set_time_resolution(Frequency.yearly)
 
 # load the data
-pipe.load('pop', OtherData.population)
-pipe.load('tasmax', CMIP6Data.tasmax, Model.CAS_ESM2_0)
-
-# set target geo/temporal resolution of existing data in pipeline
-pipe.set_geo_resolution('tasmax')
-pipe.set_time_resolution('tasmax')
+pipe.load('pop', OtherData.population(scenario=Scenario.ssp585))
+pipe.load('tasmax', CMIP6Data.tasmax(model=Model.CAS_ESM2_0, scenario=Scenario.ssp585, realization=Realization.r1i1p1f1))
 
 # operations on the data to perform the scenario
 pipe.threshold('heat', 'tasmax', Threshold(308.15, ThresholdType.greater_than))
 pipe.multiply('exposure0', 'heat', 'pop')
 pipe.country_split('exposure1', 'exposure0', ['China', 'India', 'United States', 'Canada', 'Mexico'])
-pipe.sum('exposure2', 'exposure1', dims=['lat', 'lon'])
-
-# save the results
+pipe.sum_reduce('exposure2', 'exposure1', dims=['lat', 'lon'])
 pipe.save('exposure2', 'exposure.nc')
 
 # run the pipeline
@@ -93,16 +87,23 @@ pipe.execute()
 
 which basically gets converted to the following operations:
 ```
-pop = load_population_data()
-tasmax = load_tasmax_data(Model.CAS_ESM2_0)
-heat = tasmax > 35°C
-__tmp_0__ = regrid(pop, match=heat) #automatically inserted by the pipeline
-exposure0 = heat * __tmp_0__
+pop = load_population_data()                #from some external data source
+tasmax = load_tasmax_data(Model.CAS_ESM2_0) #from some external data source
+
+# automatically regrid tasmax to match pop's geo resolution and to yearly frequency
+__tmp_0__ = geo_regrid(tasmax, match=pop)
+__tmp_1__ = time_regrid(__tmp_0__, yearly)
+
+# automatically regrid pop to yearly frequency
+__tmp_2__ = regrid(pop, yearly)
+
+# actual steps in the pipeline
+heat = __tmp_1__ > 35°C
+exposure0 = heat * __tmp_2__
 exposure1 = split_by_country(exposure0, ['China', 'India', 'United States', 'Canada', 'Mexico'])
 exposure2 = exposure1.sum(dims=['lat', 'lon'])
 exposure2.to_netcdf('exposure.nc')
 ```
-
 
 
 
@@ -124,7 +125,7 @@ Here are some example signatures for pipeline operations:
 ```
 def set_geo_resolution(self, target:Resolution|str): ...
 def set_time_resolution(self, target:Frequency|str): ...
-def load(self, name:ResultID, /, data:CMIP6Data|OtherData, model:Model|None=None): ...
+def load(self, name:ResultID, /, loader:Callable[[], Variable]): ...
 def threshold(self, y:ResultID, x:OperandID, /, threshold:Threshold): ...
 def multiply(self, y:ResultID, x1:OperandID, x2:OperandID, /): ...
 def country_split(self, y:ResultID, x:OperandID, /, countries:list[str]): ...
@@ -142,35 +143,6 @@ Some things to note:
 
 ## Misc Notes:
 - to call an `@compile` decorated function immediately (rather than add it to the pipeline, which is the default behavior), methods have a `.unwrapped` property, which returns the original unwrapped version of the function. This is useful if you want to use one of the methods inside a pipeline method at runtime, e.g. as is done in the [`auto_regrid()`](dynamic_insights.py#L683) method.
-
-## Current progress
-
-### Extreme Heat Scenario
-See the original [extreme heat scenario](test.py#L87) for comparison.
-See current [extreme heat scenario](dynamic_insights.py#L797) for building the pipeline
-
-For the goal of recreating the extreme heat scenario, most of the pipeline framework is complete.
-
-The biggest incomplete component is the handling of regridding data. Currently you can set up a pipeline that will need to regrid data, and when the execution gets to a step that needs to perform the actual regridding on the data, it is marked with a `NotImplementedError`. Namely
-- [fixed_time_regrid()](dynamic_insights.py#L630)
-- [matched_time_regrid()](dynamic_insights.py#L642)
-- [fixed_geo_regrid()](dynamic_insights.py#L655)
-- [matched_geo_regrid()](dynamic_insights.py#L667)
-
-`fixed` vs `matched` refers to which type of target is used for the regridding:
-- fixed targets a static resolution/frequency, e.g. 1°x1°, 1 month
-- matched targets (by name) the resolution/frequency of another dataset in the pipeline
-
-I think this is **HARD** difficulty
-
-Additionally for the extreme heat scenario, two of the necessary runtime operations are not yet implemented:
-- [country_split()](dynamic_insights.py#L743). This will largely pull from the version implemented in [test.py](test.py#L133), but needs to be adapted to work in the pipeline framework. I think this is **MEDIUM** difficulty
-- [sum()](dynamic_insights.py#L756). This will be basically just the xarray sum() method using the specified dimensions. I think this is **EASY** difficulty
-
-### Crop viability scenario
-See the original [crop viability scenario](test.py#L190) for comparison.
-See current [crop viability scenario](dynamic_insights.py#L835) for stub of building the pipeline
-
-In terms of the crop viability scenario, not much of the specifics are implemented. 
-- CMIP6 data for surface air temperature (tas) and precipitation (pr) can be loaded, but modis crop use data loading is not implemented
-- most of the operations used such as taking the baseline temperature/pr values, computing z-scores, etc. will need to be added as methods available in the pipeline
+- geo and temporal regridding has two types, `fixed` and `matched` which refers to which type of target is used for the regridding:
+    - fixed targets a static resolution/frequency, e.g. 1°x1°, 1 month
+    - matched targets (by name) the resolution/frequency of another dataset in the pipeline
