@@ -96,6 +96,6 @@ def demo_scenario():
 
 
 if __name__ == '__main__':
-    # heat_scenario()
-    crop_scenario()
+    heat_scenario()
+    # crop_scenario()
     # demo_scenario()

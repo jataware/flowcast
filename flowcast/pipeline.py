@@ -1,101 +1,4 @@
 from __future__ import annotations
-"""
-[CMIP6 generalization tasks]
-1. ability to dynamically construct the data pipeline for a scenario
-2. ability to dynamically/automatically get new data from cmip6 portal
-3. including past 80 years in data with ERA5
-
-
-
-
----------------------------------------------------------------------------
-
-
-
-[1. ability to dynamically construct the data pipeline for a scenario]
-
-framework notes:
-- functions that take in one or more datasets/etc., and return a result
-  - can have prerequisites on the input datasets, e.g. resolutions must match, etc.
-
-
-
-[Dataflow pipeline operations]
-
-
-rescale to target
-- other dataset
-- specified resolution
-
-
-arithmetic between datasets
-- add
-- subtract
-- multiply
-- divide
-
-arithmetic over single dataset
-- threshold
-
-aggregation over single dataset
-- sum
-- mean
-- min
-- max
-
-temporal interpolation
-- e.g. decadal to yearly
-
-crop data by country
-
-
-
-
-
-[SCENARIOS]
-
---------------- heat exposure ----------------
-pop = load pop data [decadal]
-tasmax = load tasmax data [monthly]
-
-heat = tasmax > 35°C
-heat = #TODO: to yearly. currently it is group by year and mean of heat...
-
-pop = interpolate to yearly
-
-pop, heat = crop (pop, heat) to overlapping time period
-
-heat = regrid to pop
-
-exposure = (heat > 0) * pop
-
-result = split by country (exposure, ['US', 'China', 'India', ...])
-
---------------- crop suitability --------------
-...
-
----------------------------------------------------------------------------
-
-
-
-[2. ability to dynamically/automatically get new data from cmip6 portal]
-# web scraper for downloading data, then gpt4 for combining into a single dataframe/xarray
-#  ---> process for converting to single xarray is a function defined by the llm the gets saved with processed data + original data
-
-
-
----------------------------------------------------------------------------
-
-
-[3. including past 80 years in data with ERA5]
-TBD
-
-"""
-
-
-
-
-
 
 from matplotlib import pyplot as plt
 import numpy as np
@@ -108,7 +11,7 @@ from rasterio.features import geometry_mask
 from .spacetime import Frequency, Resolution, DatetimeNoLeap, LongitudeConvention, inplace_set_longitude_convention
 from .regrid import RegridType, regrid_1d
 
-
+from os.path import dirname, abspath
 from itertools import count
 from inspect import signature, Signature
 from enum import Enum, auto
@@ -139,24 +42,6 @@ class ThresholdType(Enum):
 class Threshold:
     value: float|int
     type: ThresholdType
-
-
-# Operations
-# - load
-# - regrid
-# - crop
-# - rescale
-# - add
-# - subtract
-# - multiply
-# - divide
-# - threshold
-# - sum
-# - mean
-# - min
-# - max
-# - interpolate
-# - split
 
 
 # Datatypes for representing identifiers in the pipeline namespace
@@ -712,7 +597,9 @@ class Pipeline:
         result = var.data.isel(indexers=indexers, drop=drop)
         self.bind_value(y, PipelineVariable.from_result(result, var))
 
-    # def where(self, y:ResultID, x:OperandID, /, cond:Union[xr.DataArray, str], other:Union[xr.DataArray, str]):
+    # def where(self, y:ResultID, x:OperandID, cond:OperandID, /):
+    # def cat/stack(self, y:ResultID, x:OperandID, /, dim:str):
+    #TODO: maybe allow combining xarrays with the same size into multiple featured datasets for saving? but would require treating everything as a dataset...
 
     @compile
     def country_split(self, y:ResultID, x:OperandID, /, countries:list[str]):
@@ -817,7 +704,9 @@ class Pipeline:
         """Get the country shapefile"""
         if self._sf is None:
             self.print(f'Loading country shapefile...')
-            self._sf = gpd.read_file('gadm_0/gadm36_0.shp')
+            # script_dir = dirname(abspath(__file__))
+            # file_path = join(script_dir, 'relative_path_to_file.txt')
+            self._sf = gpd.read_file(f'{dirname(abspath(__file__))}/gadm_0/gadm36_0.shp')
         return self._sf
     
     def print(self, *args, **kwargs):
