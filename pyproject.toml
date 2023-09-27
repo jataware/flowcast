@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "flowcast"
 version = "0.1.0"
-description = "A framework for dynamically allowing users to easily string together operations with CMIP6/related data, and create custom insights into the data."
+description = "A framework for dynamically allowing users to easily string together operations over gridded netcdf data, and derived new insights from the data."
 authors = ["David Samson <david@jataware.com>"]
 license = "gpl3"
 readme = "README.md"
