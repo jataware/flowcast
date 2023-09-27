@@ -4,8 +4,8 @@ import numpy as np
 import xarray as xr
 from cftime import DatetimeNoLeap
 
-from spacetime import Frequency, Resolution
-from regrid import RegridType
+from .spacetime import Frequency, Resolution
+from .regrid import RegridType
 
 from typing import Callable
 from typing_extensions import ParamSpec

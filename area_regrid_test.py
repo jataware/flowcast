@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import numpy as np
-from dynamic_insights import Pipeline
-from data import OtherData, CMIP6Data, Realization, Scenario, Model
-from spacetime import DatetimeNoLeap, LongitudeConvention, inplace_set_longitude_convention
-from regrid import regrid_1d, RegridType
+from flowcast import Pipeline
+from flowcast.data import OtherData, CMIP6Data, Realization, Scenario, Model
+from flowcast.spacetime import DatetimeNoLeap, LongitudeConvention, inplace_set_longitude_convention
+from flowcast.regrid import regrid_1d, RegridType
 from matplotlib import pyplot as plt
 import pdb
 

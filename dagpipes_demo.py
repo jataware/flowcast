@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from collections import defaultdict, deque
 from typing import TypedDict
-from dynamic_insights import Pipeline, Threshold, ThresholdType
-from data import Realization, Scenario, CMIP6Data, OtherData, Model
+from flowcast.dynamic_insights import Pipeline, Threshold, ThresholdType
+from flowcast.data import Realization, Scenario, CMIP6Data, OtherData, Model
 from matplotlib import pyplot as plt
 import pdb
 

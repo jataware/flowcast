@@ -1,11 +1,10 @@
 xarray
+scipy
 matplotlib
 geopandas
 rasterio
 cftime
-scipy
+nc-time-axis
 typing-extensions
 rich
 netCDF4
-nc-time-axis
-dask

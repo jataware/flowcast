@@ -5,7 +5,7 @@ import numpy as np
 from scipy import stats
 import xarray as xr
 from warnings import warn
-from spacetime import datetimeNoLeap_to_epoch
+from .spacetime import datetimeNoLeap_to_epoch
 
 
 

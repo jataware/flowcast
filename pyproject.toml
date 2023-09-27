@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "flowcast"
+version = "0.1.0"
+description = "A framework for dynamically allowing users to easily string together operations with CMIP6/related data, and create custom insights into the data."
+authors = ["David Samson <david@jataware.com>"]
+license = "gpl3"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "<3.12,>=3.8"
+xarray = "^2023.1.0"
+matplotlib = "^3.7.3"
+geopandas = "^0.13.2"
+rasterio = "^1.3.8"
+cftime = "^1.6.2"
+nc-time-axis = "^1.4.1"
+scipy = "1.10.1"
+typing-extensions = "^4.8.0"
+rich = "^13.5.3"
+netCDF4 = "^1.6.4"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

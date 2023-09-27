@@ -106,9 +106,9 @@ from rasterio.transform import from_bounds
 from rasterio.features import geometry_mask
 
 
-from spacetime import Frequency, Resolution, DatetimeNoLeap, LongitudeConvention, inplace_set_longitude_convention
-from regrid import RegridType, regrid_1d
-from data import Variable
+from .spacetime import Frequency, Resolution, DatetimeNoLeap, LongitudeConvention, inplace_set_longitude_convention
+from .regrid import RegridType, regrid_1d
+from .data import Variable
 
 
 import re
@@ -828,7 +828,7 @@ class Pipeline:
 
 
 def heat_scenario():
-    from data import Realization, Scenario, Model, CMIP6Data, OtherData
+    from .data import Realization, Scenario, Model, CMIP6Data, OtherData
 
     pipe = Pipeline()
     
@@ -866,7 +866,7 @@ def heat_scenario():
 
 
 def crop_scenario():
-    from data import Realization, Scenario, Model, CMIP6Data, OtherData
+    from .data import Realization, Scenario, Model, CMIP6Data, OtherData
 
     pipe = Pipeline(low_memory=True)
     pipe.set_geo_resolution('modis')
@@ -890,7 +890,7 @@ def crop_scenario():
 
 
 def demo_scenario():
-    from data import Realization, Scenario, Model, CMIP6Data, OtherData
+    from .data import Realization, Scenario, Model, CMIP6Data, OtherData
 
     pipe = Pipeline()
     pipe.set_geo_resolution('modis')
