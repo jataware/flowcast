@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import numpy as np
-from flowcast import Pipeline
-from flowcast.data import OtherData, CMIP6Data, Realization, Scenario, Model
+from flowcast.pipeline import Pipeline
+from data import OtherData, CMIP6Data, Realization, Scenario, Model
 from flowcast.spacetime import DatetimeNoLeap, LongitudeConvention, inplace_set_longitude_convention
 from flowcast.regrid import regrid_1d, RegridType
 from matplotlib import pyplot as plt

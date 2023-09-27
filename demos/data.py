@@ -4,13 +4,12 @@ import numpy as np
 import xarray as xr
 from cftime import DatetimeNoLeap
 
-from .spacetime import Frequency, Resolution
-from .regrid import RegridType
+from flowcast.regrid import RegridType
+from flowcast.pipeline import Variable
 
 from typing import Callable
 from typing_extensions import ParamSpec
-from enum import Enum, auto
-from dataclasses import dataclass
+from enum import Enum
 
 import pdb
 
@@ -31,12 +30,6 @@ class Model(str, Enum):
     CAS_ESM2_0 = 'CAS-ESM2-0'
     FGOALS_f3_L = 'FGOALS-f3-L'
     #TODO: other models as needed
-
-@dataclass
-class Variable:
-    data: xr.DataArray
-    time_regrid_type: RegridType|None
-    geo_regrid_type: RegridType|None
 
 # aliases for keeping track of which is which
 GeoRegridType = RegridType
