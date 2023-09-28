@@ -24,3 +24,7 @@ __pycache__/
 
 # gadm folder
 gadm_0/
+
+
+# build files
+dist/
