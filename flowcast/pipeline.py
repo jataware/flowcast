@@ -704,8 +704,6 @@ class Pipeline:
         """Get the country shapefile"""
         if self._sf is None:
             self.print(f'Loading country shapefile...')
-            # script_dir = dirname(abspath(__file__))
-            # file_path = join(script_dir, 'relative_path_to_file.txt')
             self._sf = gpd.read_file(f'{dirname(abspath(__file__))}/gadm_0/gadm36_0.shp')
         return self._sf
     
