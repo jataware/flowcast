@@ -133,10 +133,3 @@ def inplace_set_longitude_convention(data:xr.DataArray, convention:LongitudeConv
     # update the data in place
     data.data = new_data
     data['lon'] = new_lon
-
-
-
-
-import pdb
-def setup_gadm():
-    pdb.set_trace()

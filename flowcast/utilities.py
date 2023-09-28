@@ -29,6 +29,7 @@ def is_static(method:Callable[_P, _R_co]) -> bool:
             elif global_method is method:
                 return False
     
+    pdb.set_trace()
     raise ValueError(f'Failed to identify the class of method {method}')
 
 
@@ -67,29 +68,38 @@ def method_uses_prop(method:Callable[_P, _R_co], prop:str) -> bool:
             return True
     return False
 
-# example usage
-class A:
-    def __init__(self):
-        self.a = 5
-    
-    def some_method(self):
-        if random.random() > 0.5:
-            print(f'{self.a=}')
-        else:
-            print('a not used in this branch')
-
-    def another_method(belf):
-        print('a not used in this method')
-        belf.a
-
-    @staticmethod
-    def static_method(self):
-        print('a not used in this method')
-        A().a
-        self.a
 
 
-print(method_uses_prop(A().some_method, 'a'))  # True
-print(method_uses_prop(A.another_method, 'a'))  # False
-print(method_uses_prop(A.static_method, 'a'))  # False
-print(method_uses_prop(A().static_method, 'a'))  # False
+def setup_gadm():
+    print('Setting up GADM')
+    print('TODO: implement setup_gadm')
+
+
+
+if __name__ == '__main__':
+    # example usage
+    class A:
+        def __init__(self):
+            self.a = 5
+        
+        def some_method(self):
+            if random.random() > 0.5:
+                print(f'{self.a=}')
+            else:
+                print('a not used in this branch')
+
+        def another_method(belf):
+            print('a not used in this method')
+            belf.a
+
+        @staticmethod
+        def static_method(self):
+            print('a not used in this method')
+            A().a
+            self.a
+
+
+    print(method_uses_prop(A().some_method, 'a'))  # True
+    print(method_uses_prop(A.another_method, 'a'))  # False
+    print(method_uses_prop(A.static_method, 'a'))  # False
+    print(method_uses_prop(A().static_method, 'a'))  # False

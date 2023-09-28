@@ -10,6 +10,7 @@ from rasterio.features import geometry_mask
 
 from .spacetime import Frequency, Resolution, DatetimeNoLeap, LongitudeConvention, inplace_set_longitude_convention
 from .regrid import RegridType, regrid_1d
+from .utilities import method_uses_prop, setup_gadm
 
 from os.path import dirname, abspath
 from itertools import count
@@ -168,6 +169,11 @@ class Pipeline:
         if sig.return_annotation not in {None, Signature.empty}:
             raise ValueError(f'Method "{method.__name__}" should not have a return annotation or it should be set to None.')
 
+
+        #TODO: currently broken
+        # check if the method uses sf, meaning we need to verify gadm shapefiles are available
+        # if method_uses_prop(method, 'sf'):
+        #     setup_gadm()
 
         def wrapper(self:'Pipeline', *args, **kwargs):
 
