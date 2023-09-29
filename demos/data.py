@@ -13,7 +13,9 @@ from enum import Enum
 
 import pdb
 
+from os.path import dirname, abspath, join
 
+root = dirname(abspath(__file__))
 
 
 class Scenario(str, Enum):
@@ -63,7 +65,7 @@ class OtherData(DataLoader):
 
         for year in [2010, 2020, 2030, 2040, 2050, 2060, 2070, 2080, 2090, 2100]:
             data = xr                                                                           \
-                .open_dataset(f'data/population/{ssp.upper()}/Total/NetCDF/{ssp}_{year}.nc')    \
+                .open_dataset(f'{root}/data/population/{ssp.upper()}/Total/NetCDF/{ssp}_{year}.nc')    \
                 .rename({f'{ssp}_{year}': 'population'})                                        \
                 .assign_coords(
                     time=DatetimeNoLeap(year, 1, 1),
@@ -80,7 +82,7 @@ class OtherData(DataLoader):
     @dataloader
     def land_cover() -> Variable:
         """Modis Land Cover Data"""
-        modis = xr.open_dataset('data/MODIS/land-use-5km.nc')
+        modis = xr.open_dataset(f'{root}/data/MODIS/land-use-5km.nc')
         modis = modis['LC_Type1']
         modis['time'] = modis.indexes['time'].to_datetimeindex().map(lambda dt: DatetimeNoLeap(dt.year, dt.month, dt.day))
         modis = modis.drop(['crs'])
@@ -99,7 +101,7 @@ class CMIP6Data(DataLoader):
         else:
             raise ValueError(f'Unrecognized model: {model}. Expected one of: {[*Model.__members__.values()]}')
         
-        return xr.open_dataset(f'data/cmip6/{variable}/{variable}_Amon_{model}_{scenario}_{realization}_{grid}_201501-210012.nc')[variable]
+        return xr.open_dataset(f'{root}/data/cmip6/{variable}/{variable}_Amon_{model}_{scenario}_{realization}_{grid}_201501-210012.nc')[variable]
 
     @dataloader
     def tasmax(*, realization: Realization, scenario: Scenario, model:Model) -> Variable:
