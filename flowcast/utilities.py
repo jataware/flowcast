@@ -64,6 +64,7 @@ default_gadm_path = Path(Path(__file__).parent, 'gadm')
 
 gadm_env_var = 'GADM_DIR'
 
+from tqdm import tqdm
 
 def verify_gadm(dir:Path):
     """Presuming that GADM data is already downloaded, verify that the given directory contains the GADM data in the expected format"""
@@ -87,16 +88,34 @@ def download_gadm(dir:Path):
 
     for url, filename in zip(urls, filenames):
         # download the file
-        r = requests.get(url, allow_redirects=True)
+        r = requests.get(url, allow_redirects=True, stream=True)
         assert r.status_code == 200, f'Failed to download GADM data from {url}. Got status code: {r.status_code}'
 
-        # save the file
-        with open(join(dir, filename), 'wb') as f:
-            f.write(r.content)
+        total_size = int(r.headers.get('content-length', 0))
 
-        # unzip the file
+        # save the file
+        with open(join(dir, filename), 'wb') as f, tqdm(desc=f'download {filename}', total=total_size, unit='iB', unit_scale=True) as bar:
+            for chunk in r.iter_content(chunk_size=1024):
+                f.write(chunk)
+                bar.update(len(chunk))
+
+        # unzip the file with a progress bar
         with ZipFile(join(dir, filename), 'r') as z:
-            z.extractall(dir)
+            # Get the total uncompressed size for the progress bar
+            total_size = sum(item.file_size for item in z.infolist())
+            with tqdm(desc=f'unzip {filename}', total=total_size, unit='B', unit_scale=True, unit_divisor=1024) as bar:
+                
+                for member in z.infolist():
+                    # Extract each member in chunks to update the progress bar
+                    with z.open(member, 'r') as source, open(Path(dir, member.filename), 'wb') as target:
+                        chunk_size = 1024 * 1024  # 1MB
+                        while True:
+                            chunk = source.read(chunk_size)
+                            if not chunk:
+                                break
+                            target.write(chunk)
+                            bar.update(len(chunk))
+
 
         # delete the zip file
         os.remove(join(dir, filename))
@@ -132,3 +151,8 @@ def get_gadm():
         self.print(f'Loading country shapefile...')
         _sf = gpd.read_file(f'{dirname(abspath(__file__))}/gadm_0/gadm36_0.shp')
     return self._sf
+
+
+if __name__ == '__main__':
+    #DEBUG
+    download_gadm(default_gadm_path)

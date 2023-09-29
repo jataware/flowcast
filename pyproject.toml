@@ -18,6 +18,7 @@ scipy = "1.10.1"
 typing-extensions = "^4.8.0"
 rich = "^13.5.3"
 netCDF4 = "^1.6.4"
+tqdm = "^4.66.1"
 
 
 [build-system]
