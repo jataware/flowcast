@@ -1,0 +1,46 @@
+name: Deploy to PyPI on Version Change
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Install Poetry
+      run: |
+        curl -sSL https://install.python-poetry.org | python3 -
+
+    - name: Get the current version from pyproject.toml
+      id: get_version
+      run: |
+        echo "::set-output name=version::$(poetry version | awk '{print $2}')"
+      shell: bash
+
+    - name: Check if version has changed
+      id: check_version
+      uses: actions/cache@v2
+      with:
+        key: version-${{ steps.get_version.outputs.version }}
+        path: .version_cache
+        restore-keys: version-
+
+    - name: Build and publish if version has changed
+      if: steps.check_version.outputs.cache-hit != 'true'
+      env:
+        POETRY_HTTP_BASIC_PYPI_USERNAME: __token__
+        POETRY_HTTP_BASIC_PYPI_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+      run: |
+        poetry build
+        poetry publish
+
+    - name: Update version cache
+      if: steps.check_version.outputs.cache-hit != 'true'
+      run: |
+        echo "${{ steps.get_version.outputs.version }}" > .version_cache
