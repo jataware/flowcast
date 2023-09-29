@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable, TypeVar
+from typing import Callable, TypeVar, Any
 from typing_extensions import ParamSpec
 
 import inspect
@@ -12,8 +12,8 @@ import pdb
 _P = ParamSpec('_P')
 _R_co = TypeVar('_R_co', covariant=True)
 
-
-def method_uses_prop(cls:type, method:Callable[_P, _R_co], prop:str, key:Callable[[], Callable[_P, _R_co]]=lambda m:m) -> bool:
+#TODO: move to pipeline.py
+def method_uses_prop(cls:type, method:Callable[_P, _R_co], prop:str, key:Callable[[Any], Callable[_P, _R_co]]=lambda m:m) -> bool:
     """
     Check if a method access a given property of the class in its source code.
     So far this is mainly used to check if a pipeline method requires GADM data which might not be downloaded yet.
@@ -52,9 +52,83 @@ def method_uses_prop(cls:type, method:Callable[_P, _R_co], prop:str, key:Callabl
     return False
 
 
+#TODO: rename file to gadm.py
+import os
+from os.path import dirname, abspath, isdir, join
+import requests
+from pathlib import Path
+from zipfile import ZipFile
 
-def setup_gadm():
-    print('Setting up GADM')
-    print('TODO: implement setup_gadm')
+# default_gadm_path = Path(dirname(abspath(__file__)), 'gadm')
+default_gadm_path = Path(Path(__file__).parent, 'gadm')
+
+gadm_env_var = 'GADM_DIR'
+
+
+def verify_gadm(dir:Path):
+    """Presuming that GADM data is already downloaded, verify that the given directory contains the GADM data in the expected format"""
+    #verify that the directory exists
+    assert isdir(dir), f'Invalid GADM directory. Expected a directory. Got: {dir}'
+    #TODO: rest of verification
     pdb.set_trace()
 
+def download_gadm(dir:Path):
+    """Download GADM data to the given directory"""
+
+    # create the directory if it doesn't exist
+    os.makedirs(dir, exist_ok=True)
+
+    # download admin2 and admin3 from the S3 bucket
+    urls = [
+        'https://jataware-world-modelers.s3.amazonaws.com/gadm/gadm36_2.feather.zip',
+        'https://jataware-world-modelers.s3.amazonaws.com/gadm/gadm36_3.feather.zip'
+    ]
+    filenames = [url.split('/')[-1] for url in urls]
+
+    for url, filename in zip(urls, filenames):
+        # download the file
+        r = requests.get(url, allow_redirects=True)
+        assert r.status_code == 200, f'Failed to download GADM data from {url}. Got status code: {r.status_code}'
+
+        # save the file
+        with open(join(dir, filename), 'wb') as f:
+            f.write(r.content)
+
+        # unzip the file
+        with ZipFile(join(dir, filename), 'r') as z:
+            z.extractall(dir)
+
+        # delete the zip file
+        os.remove(join(dir, filename))
+
+
+
+def setup_gadm():
+    """Ensure that GADM data is downloaded and ready to use"""
+    # if GADM_DIR environment variable is set, use that
+    gadm_dir = os.environ.get(gadm_env_var)
+    if gadm_dir is not None:
+        gadm_dir = Path(gadm_dir)
+        verify_gadm(gadm_dir)
+        print(f'Using ENV specified GADM data from {gadm_dir}')
+        return
+
+    # otherwise use the default directory, and download GADM if necessary
+    try:
+        verify_gadm(default_gadm_path)
+        print(f'Using default GADM data from {default_gadm_path}')
+        return
+    except:
+        print(f'Downloading default GADM data to {default_gadm_path}')
+        download_gadm(default_gadm_path)
+        verify_gadm(default_gadm_path)
+        print(f'Using default GADM data from {default_gadm_path}')
+
+
+_sf = None
+def get_gadm():
+    """Get the country shapefile"""
+    if _sf is None:
+        self.print(f'Loading country shapefile...')
+        _sf = gpd.read_file(f'{dirname(abspath(__file__))}/gadm_0/gadm36_0.shp')
+    return self._sf
