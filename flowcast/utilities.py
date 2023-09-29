@@ -5,7 +5,6 @@ from typing_extensions import ParamSpec
 
 import inspect
 import ast
-import random
 import textwrap
 
 import pdb
@@ -14,38 +13,22 @@ _P = ParamSpec('_P')
 _R_co = TypeVar('_R_co', covariant=True)
 
 
-def is_static(method:Callable[_P, _R_co]) -> bool:
-    # If it's bound to an instance or class
-    if hasattr(method, "__self__"):
-        cls = method.__self__ if isinstance(method.__self__, type) else method.__self__.__class__
-        return isinstance(cls.__dict__.get(method.__name__, None), staticmethod)
+def method_uses_prop(cls:type, method:Callable[_P, _R_co], prop:str, key:Callable[[], Callable[_P, _R_co]]=lambda m:m) -> bool:
+    """
+    Check if a method access a given property of the class in its source code.
+    So far this is mainly used to check if a pipeline method requires GADM data which might not be downloaded yet.
 
-    # If it's unbound
-    for global_cls in globals().values():
-        if isinstance(global_cls, type) and hasattr(global_cls, method.__name__):
-            global_method = global_cls.__dict__[method.__name__]
-            if isinstance(global_method, staticmethod) and global_method.__func__ is method:
-                return True
-            elif global_method is method:
-                return False
-    
-    pdb.set_trace()
-    raise ValueError(f'Failed to identify the class of method {method}')
+    Parameters:
+    - cls (type): The class that the method is attached to
+    - method (callable): The method to check
+    - prop (str): The name of the property to check for
+    - key (callable): used for accessing the method directly from the `cls.__dict__`. usage is `key(cls.__dict__[method.__name__])`. E.g. pipeline methods are wrapped, so key can be used to unwrap them. Defaults to the identity function.
+    """
 
-
-def method_uses_prop(method:Callable[_P, _R_co], prop:str) -> bool:
-
-    # verify that the method is a method
-    #TODO:...
-
-    # static methods don't have access to self
-    if is_static(method):
+    #check if the method is static. Static methods don't use properties
+    class_attached = key(cls.__dict__[method.__name__])
+    if isinstance(class_attached, staticmethod):
         return False
-
-    # unbind the method if it is bound
-    if hasattr(method, '__func__'):
-        method = method.__func__
-
 
     # Fetch the source code of the method
     source = inspect.getsource(method)
@@ -73,33 +56,5 @@ def method_uses_prop(method:Callable[_P, _R_co], prop:str) -> bool:
 def setup_gadm():
     print('Setting up GADM')
     print('TODO: implement setup_gadm')
+    pdb.set_trace()
 
-
-
-if __name__ == '__main__':
-    # example usage
-    class A:
-        def __init__(self):
-            self.a = 5
-        
-        def some_method(self):
-            if random.random() > 0.5:
-                print(f'{self.a=}')
-            else:
-                print('a not used in this branch')
-
-        def another_method(belf):
-            print('a not used in this method')
-            belf.a
-
-        @staticmethod
-        def static_method(self):
-            print('a not used in this method')
-            A().a
-            self.a
-
-
-    print(method_uses_prop(A().some_method, 'a'))  # True
-    print(method_uses_prop(A.another_method, 'a'))  # False
-    print(method_uses_prop(A.static_method, 'a'))  # False
-    print(method_uses_prop(A().static_method, 'a'))  # False

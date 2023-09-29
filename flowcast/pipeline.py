@@ -169,12 +169,6 @@ class Pipeline:
         if sig.return_annotation not in {None, Signature.empty}:
             raise ValueError(f'Method "{method.__name__}" should not have a return annotation or it should be set to None.')
 
-
-        #TODO: currently broken
-        # check if the method uses sf, meaning we need to verify gadm shapefiles are available
-        # if method_uses_prop(method, 'sf'):
-        #     setup_gadm()
-
         def wrapper(self:'Pipeline', *args, **kwargs):
 
             # append the function to the list of steps in the pipeline
@@ -188,6 +182,10 @@ class Pipeline:
             for i in result_idx:
                 self._assert_id_is_unique_and_mark_used(args[i])
 
+            # check if the method uses sf, meaning we need to verify gadm shapefiles are available
+            if method_uses_prop(Pipeline, method, 'sf', key=lambda m: m.unwrapped):
+                setup_gadm()
+
         # save the unmodified original function in for use inside pipeline methods
         wrapper.unwrapped = method
 
@@ -195,7 +193,7 @@ class Pipeline:
 
     
     @staticmethod
-    def step_repr(step:tuple[MethodType, tuple[Any, ...], dict[str, Any]]):
+    def step_str(step:tuple[MethodType, tuple[Any, ...], dict[str, Any]]):
         """get the repr for the given step in the pipeline"""
         func, args, kwargs = step
         args = args[1:] #skip self. Removing this causes infinite recursion
@@ -205,9 +203,13 @@ class Pipeline:
         return f'Pipeline.{name}({", ".join((args_str, kwargs_str))})'
     
 
+    def __str__(self):
+        """get the str for the pipeline"""
+        return '\n'.join([f'{i}: {Pipeline.step_str(step)}' for i, step in enumerate(self.steps)])
+
     def __repr__(self):
         """get the repr for the pipeline"""
-        return '\n'.join([f'{i}: {Pipeline.step_repr(step)}' for i, step in enumerate(self.steps)])
+        return f'Pipeline({[func.__name__ for func, _, _ in self.steps]})'
 
     
     def _next_tmp_id(self) -> str:
@@ -228,7 +230,7 @@ class Pipeline:
         """
         if identifier not in self.compiled_ids:
             pdb.set_trace()
-            raise ValueError(f'Operand identifier "{identifier}" does not exist in pipeline at step {len(self.steps)-1}: {self.step_repr(self.steps[-1])}')
+            raise ValueError(f'Operand identifier "{identifier}" does not exist in pipeline at step {len(self.steps)-1}: {self.step_str(self.steps[-1])}')
     
     def _assert_id_is_unique_and_mark_used(self, identifier:str):
         """
@@ -239,7 +241,7 @@ class Pipeline:
         @compile handles this automatically
         """
         if identifier in self.compiled_ids:
-            raise ValueError(f'Tried to reuse "{identifier}" for result identifier on step {len(self.steps)-1}: {self.step_repr(self.steps[-1])}. All identifiers must be unique.')
+            raise ValueError(f'Tried to reuse "{identifier}" for result identifier on step {len(self.steps)-1}: {self.step_str(self.steps[-1])}. All identifiers must be unique.')
         self.compiled_ids.add(identifier)
 
     
@@ -604,8 +606,8 @@ class Pipeline:
         self.bind_value(y, PipelineVariable.from_result(result, var))
 
     # def where(self, y:ResultID, x:OperandID, cond:OperandID, /):
-    # def cat/stack(self, y:ResultID, x:OperandID, /, dim:str):
-    #TODO: maybe allow combining xarrays with the same size into multiple featured datasets for saving? but would require treating everything as a dataset...
+    # def cat(self, y:ResultID, x:OperandID, /, dim:str): coord np.ndarray data could be optional
+    # def stack(self, y:ResultID, x:OperandID, /, coord:{name:str, data:np.ndarray}):
 
     @compile
     def country_split(self, y:ResultID, x:OperandID, /, countries:list[str]):
@@ -702,7 +704,7 @@ class Pipeline:
     def execute(self):
         """Execute the pipeline"""
         for func, args, kwargs in self.steps:
-            self.print(self.step_repr((func, args, kwargs)))
+            self.print(self.step_str((func, args, kwargs)))
             func(*args, **kwargs)
 
     @property
