@@ -27,7 +27,7 @@ y = load_data(...)
 x = x > 100
 y = y * x
 y = y.sum(dims=['lat', 'lon'])
-y = y.split_by_country(['China', 'India', 'United States', 'Canada', 'Mexico'])
+y = y.reverse_geocode(['China', 'India', 'United States', 'Canada', 'Mexico'])
 y.save('result.nc')
 ```
 new names are needed for each step:
@@ -37,7 +37,7 @@ y1 = load_data(...)
 x2 = x1 > 100
 y2 = y * x2
 y3 = y2.sum(dims=['lat', 'lon'])
-y4 = y3.split_by_country(['China', 'India', 'United States', 'Canada', 'Mexico'])
+y4 = y3.reverse_geocode(['China', 'India', 'United States', 'Canada', 'Mexico'])
 y4.save('result.nc')
 ```
 
@@ -100,7 +100,7 @@ __tmp_2__ = regrid(pop, yearly)
 # actual steps in the pipeline
 heat = __tmp_1__ > 35°C
 exposure0 = heat * __tmp_2__
-exposure1 = split_by_country(exposure0, ['China', 'India', 'United States', 'Canada', 'Mexico'])
+exposure1 = reverse_geocode(exposure0, ['China', 'India', 'United States', 'Canada', 'Mexico'])
 exposure2 = exposure1.sum(dims=['lat', 'lon'])
 exposure2.to_netcdf('exposure.nc')
 ```
