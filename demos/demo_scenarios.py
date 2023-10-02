@@ -21,7 +21,7 @@ def heat_scenario():
     # operations on the data to perform the scenario
     pipe.threshold('heat', 'tasmax', Threshold(308.15, ThresholdType.greater_than))
     pipe.multiply('exposure0', 'heat', 'pop')
-    pipe.country_split('exposure1', 'exposure0', ['China', 'India', 'United States', 'Canada', 'Mexico', 'Brazil', 'Australia'])
+    pipe.reverse_geocode('exposure1', 'exposure0', ['China', 'India', 'United States', 'Canada', 'México', 'Brazil', 'Australia'])
     pipe.sum_reduce('exposure2', 'exposure1', dims=['lat', 'lon'])
     pipe.save('exposure2', 'exposure.nc')
 
@@ -34,8 +34,8 @@ def heat_scenario():
     # tasmax = pipe.get_value('tasmax')
 
     # plot all the countries on a single plot
-    for country in res.data['country'].values:
-        res.data.sel(country=country).plot(label=country)
+    for country in res.data['admin0'].values:
+        res.data.sel(admin0=country).plot(label=country)
 
     plt.title('People Exposed to Heatwaves by Country')
     plt.legend()

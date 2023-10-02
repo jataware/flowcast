@@ -19,6 +19,7 @@ typing-extensions = "^4.8.0"
 rich = "^13.5.3"
 netCDF4 = "^1.6.4"
 tqdm = "^4.66.1"
+geofeather = "^0.3.0"
 
 
 [build-system]

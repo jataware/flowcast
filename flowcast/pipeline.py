@@ -10,7 +10,8 @@ from rasterio.features import geometry_mask
 
 from .spacetime import Frequency, Resolution, DatetimeNoLeap, LongitudeConvention, inplace_set_longitude_convention
 from .regrid import RegridType, regrid_1d
-from .utilities import method_uses_prop, setup_gadm
+from .utilities import method_uses_prop
+from .gadm import setup_gadm, get_admin2_shapes, get_admin3_shapes
 
 from os.path import dirname, abspath
 from itertools import count
@@ -88,6 +89,7 @@ class PipelineVariable(Variable):
 _R_co = TypeVar("_R_co", covariant=True)
 _P = ParamSpec("_P")
 
+# More correct type for @compile decorator (correctly handling .unwrapped property), but doesn't show the method description in the IDE
 # class CallableWithUnwrapped(Protocol[_P, _R_co], Callable[_P, _R_co]):
 #     # def __call__(self, *args: _P.args, **kwargs: _P.kwargs) -> _R_co: ...
     
@@ -182,8 +184,8 @@ class Pipeline:
             for i in result_idx:
                 self._assert_id_is_unique_and_mark_used(args[i])
 
-            # check if the method uses sf, meaning we need to verify gadm shapefiles are available
-            if method_uses_prop(Pipeline, method, 'sf', key=lambda m: m.unwrapped):
+            # check if the method uses any adminN properties, meaning we need to verify gadm shapefiles are available
+            if any(method_uses_prop(Pipeline, method, name, key=lambda m: m.unwrapped) for name in ['admin0', 'admin1', 'admin2', 'admin3']):
                 setup_gadm()
 
         # save the unmodified original function in for use inside pipeline methods
@@ -610,14 +612,17 @@ class Pipeline:
     # def stack(self, y:ResultID, x:OperandID, /, coord:{name:str, data:np.ndarray}):
 
     @compile
-    def country_split(self, y:ResultID, x:OperandID, /, countries:list[str]):
+    def reverse_geocode(self, y:ResultID, x:OperandID, /, places:list[str]=None, admin_level:int=0):
+    # def country_split(self, y:ResultID, x:OperandID, /, countries:list[str]):
         """
-        Adds a new 'country' dimension to the data, and separates splits out the data at each given country
+        Adds a new 'admin<N>' (where N is the specified admin level) dimension to the data with slices for each specified place. 
+        for each new place slice, masks out all data points not within the bounds of that place
 
         Args:
             y (str): the identifier to bind the result to in the pipeline namespace
             x (str): the identifier of the data to split
-            countries (list[str]): the list of countries to split the data by
+            places (list[str], optional): the list of administrative boundaries to split the data by. Places may only be drawn from those at the specified admin level. If None, all places at the specified admin level will be used
+            admin_level (int, optional): the admin level to split the data by. Defaults to 0 (i.e. country level).
         """
 
         var = self.get_value(x)
@@ -626,45 +631,54 @@ class Pipeline:
         lat: np.ndarray = data.lat.values
         lon: np.ndarray = data.lon.values
 
-        # if no countries are specified, use all of them
-        if countries is None:
-            countries = self.sf['NAME_0'].unique().tolist()
 
-        # get the shapefile rows for the countries we want
-        countries_set = set(countries)
-        countries_shp = self.sf[self.sf['NAME_0'].isin(countries_set)]
-
-        # sort the countries in countries_shp to match the order of the countries in the data
-        countries_shp = countries_shp.set_index('NAME_0').loc[countries].reset_index()
-
-        # set up new np array of shape [len(countries), *data.shape]
-        out_data = np.zeros((len(countries), *data.shape), dtype=data.dtype)
+        # get the shapes for the specified admin level
+        assert admin_level in range(0, 4), f'Invalid admin level: {admin_level}. Must be in range [0, 3]'
+        if admin_level == 3:
+            shapes = self.admin3
+        else:
+            shapes = self.admin2
         
-        # needed for geometry_mask. cache here since we don't need to recompute it for each country
+        # if no places are specified, use all of them
+        all_places = shapes[f'NAME_{admin_level}'].unique().tolist()
+        if places is None:
+            places = all_places
+        else:
+            # verify that all the places are valid
+            all_places = set(all_places)
+            for place in places:
+                assert place in all_places, f'Invalid place: {place}. Must be one of: {all_places}'
+
+        # set up new np array of shape [len(places), *data.shape]
+        out_data = np.zeros((len(places), *data.shape), dtype=data.dtype)
+        
+        # needed for geometry_mask. cache here since we don't need to recompute it for each place
         transform = from_bounds(lon.min(), lat.min(), lon.max(), lat.max(), len(lon), len(lat))
 
-        for i, (_, country, gid, geometry) in enumerate(countries_shp.itertuples()):
-            self.print(f'processing {country}...')
-
+        for i, place in enumerate(places):
+            self.print(f'processing {place}...')
+            place_shapes = shapes[shapes[f'NAME_{admin_level}'] == place]
+            
             # Generate a mask for the current country and apply the mask to the data
-            mask = geometry_mask([geometry], transform=transform, invert=True, out_shape=(len(lat), len(lon)))
+            mask = geometry_mask(place_shapes['geometry'], transform=transform, invert=True, out_shape=(len(lat), len(lon)))
             masked_data = data.where(xr.DataArray(mask, coords={'lat':lat, 'lon':lon}, dims=['lat', 'lon']))
 
             # insert the masked data into the output array
             out_data[i] = masked_data
 
-        # combine all the data into a new DataArray with a country dimension
+                # combine all the data into a new DataArray with a country dimension
         out_data = xr.DataArray(
             out_data,
-            dims=('country', *data.dims),
+            dims=(f'admin{admin_level}', *data.dims),
             coords={
-                'country': countries,
+                f'admin{admin_level}': places,
                 **data.coords,
             }
         )
         
         # save the result to the pipeline namespace
         self.bind_value(y, PipelineVariable.from_result(out_data, var))
+
 
     @compile
     def sum_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
@@ -708,12 +722,20 @@ class Pipeline:
             func(*args, **kwargs)
 
     @property
-    def sf(self):
-        """Get the country shapefile"""
-        if self._sf is None:
-            self.print(f'Loading country shapefile...')
-            self._sf = gpd.read_file(f'{dirname(abspath(__file__))}/gadm_0/gadm36_0.shp')
-        return self._sf
+    def admin2(self):
+        return get_admin2_shapes() # already cached
+
+    @property
+    def admin3(self):
+        return get_admin3_shapes() # already cached
+
+    # @property
+    # def sf(self):
+    #     """Get the country shapefile"""
+    #     if self._sf is None:
+    #         self.print(f'Loading country shapefile...')
+    #         self._sf = gpd.read_file(f'{dirname(abspath(__file__))}/gadm_0/gadm36_0.shp')
+    #     return self._sf
     
     def print(self, *args, **kwargs):
         if self.verbose:
