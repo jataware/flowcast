@@ -23,7 +23,6 @@ __pycache__/
 *.chat
 
 # gadm folder
-gadm_0/
 gadm/
 
 
