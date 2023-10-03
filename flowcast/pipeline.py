@@ -613,7 +613,6 @@ class Pipeline:
 
     @compile
     def reverse_geocode(self, y:ResultID, x:OperandID, /, places:list[str]=None, admin_level:int=0):
-    # def country_split(self, y:ResultID, x:OperandID, /, countries:list[str]):
         """
         Adds a new 'admin<N>' (where N is the specified admin level) dimension to the data with slices for each specified place. 
         for each new place slice, masks out all data points not within the bounds of that place
@@ -624,13 +623,14 @@ class Pipeline:
             places (list[str], optional): the list of administrative boundaries to split the data by. Places may only be drawn from those at the specified admin level. If None, all places at the specified admin level will be used
             admin_level (int, optional): the admin level to split the data by. Defaults to 0 (i.e. country level).
         """
-
+        # first make sure the data matches the specified resolution and frequency
+        x = self.auto_regrid(x, allow_no_target=True)
+        
+        # get the raw data and lat/lon coordinates
         var = self.get_value(x)
-
         data = var.data
         lat: np.ndarray = data.lat.values
         lon: np.ndarray = data.lon.values
-
 
         # get the shapes for the specified admin level
         assert admin_level in range(0, 4), f'Invalid admin level: {admin_level}. Must be in range [0, 3]'
@@ -659,8 +659,12 @@ class Pipeline:
             self.print(f'processing {place}...')
             place_shapes = shapes[shapes[f'NAME_{admin_level}'] == place]
             
-            # Generate a mask for the current country and apply the mask to the data
+            # Generate a mask for the current place and flip it if necessary
             mask = geometry_mask(place_shapes['geometry'], transform=transform, invert=True, out_shape=(len(lat), len(lon)))
+            if lat[0] < lat[-1]: mask = mask[::-1]
+            if lon[0] > lon[-1]: mask = mask[:, ::-1]
+
+            # apply the mask to the data
             masked_data = data.where(xr.DataArray(mask, coords={'lat':lat, 'lon':lon}, dims=['lat', 'lon']))
 
             # insert the masked data into the output array

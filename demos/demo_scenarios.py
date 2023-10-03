@@ -6,9 +6,9 @@ from data import Realization, Scenario, Model, CMIP6Data, OtherData
 import pdb
 
 
-def heat_scenario():
+def country_heat_scenario():
 
-    pipe = Pipeline()
+    pipe = Pipeline(low_memory=True)
     
     # set geo/temporal resolution targets for operations in the pipeline
     pipe.set_geo_resolution('pop')
@@ -42,6 +42,41 @@ def heat_scenario():
     plt.show()
 
 
+def state_heat_scenario():
+
+    pipe = Pipeline(low_memory=True)
+    
+    # set geo/temporal resolution targets for operations in the pipeline
+    pipe.set_geo_resolution('pop')
+    pipe.set_time_resolution(Frequency.yearly)
+
+    # load the data
+    pipe.load('pop', OtherData.population(scenario=Scenario.ssp585))
+    pipe.load('tasmax', CMIP6Data.tasmax(model=Model.CAS_ESM2_0, scenario=Scenario.ssp585, realization=Realization.r1i1p1f1))
+    
+    # operations on the data to perform the scenario
+    pipe.threshold('heat', 'tasmax', Threshold(308.15, ThresholdType.greater_than))
+    pipe.multiply('exposure0', 'heat', 'pop')
+    pipe.reverse_geocode('exposure1', 'exposure0', ['California', 'Texas', 'Virginia', 'Pennsylvania', 'Florida'], admin_level=1)
+    pipe.sum_reduce('exposure2', 'exposure1', dims=['lat', 'lon'])
+    pipe.save('exposure2', 'exposure.nc')
+
+    # run the pipeline
+    pipe.execute()
+
+    # e.g. extract any live results
+    res = pipe.get_last_value()
+    # pop = pipe.get_value('pop')
+    # tasmax = pipe.get_value('tasmax')
+
+    # plot all the states on a single plot
+    for state in res.data['admin1'].values:
+        res.data.sel(admin1=state).plot(label=state)
+
+    plt.title('People Exposed to Heatwaves by State')
+    plt.legend()
+    plt.show()
+    
 
 def crop_scenario():
     pipe = Pipeline(low_memory=True)
@@ -96,6 +131,8 @@ def demo_scenario():
 
 
 if __name__ == '__main__':
-    heat_scenario()
+    # test_admin1()
+    # country_heat_scenario()
+    state_heat_scenario()
     # crop_scenario()
     # demo_scenario()
