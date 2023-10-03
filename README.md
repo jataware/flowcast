@@ -1,5 +1,5 @@
 # Flowcast
-A framework for dynamically allowing users to easily string together operations over gridded netcdf data, and derived new insights from the data.
+A framework for dynamically stringing together operations over gridded netcdf data, to create derived insights.
 
 ## Overview
 To create a dynamic insight, the user will:
