@@ -611,6 +611,8 @@ class Pipeline:
     # def cat(self, y:ResultID, x:OperandID, /, dim:str): coord np.ndarray data could be optional
     # def stack(self, y:ResultID, x:OperandID, /, coord:{name:str, data:np.ndarray}):
 
+    #TODO: this should handle duplicate place names for higher admin levels. e.g. there are multiple Arlingtons (Arlington VA, Arlington TX, etc.)
+    #      One possible way to handle is to take a tuple (place0, place1, place2, ...) (assert len(places) == admin_level + 1)
     @compile
     def reverse_geocode(self, y:ResultID, x:OperandID, /, places:list[str]=None, admin_level:int=0):
         """
