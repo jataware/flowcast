@@ -6,7 +6,7 @@ import xarray as xr
 import geopandas as gpd
 from rasterio.transform import from_bounds
 from rasterio.features import geometry_mask
-
+import calendar
 
 from .spacetime import Frequency, Resolution, DatetimeNoLeap, LongitudeConvention, inplace_set_longitude_convention
 from .regrid import RegridType, regrid_1d
@@ -380,7 +380,15 @@ class Pipeline:
         # generate the new time coordinates
         min_time = var.data.time.data.min()
         max_time = var.data.time.data.max()
-        if target == Frequency.monthly:
+        if target == Frequency.daily:
+            min_time = min_time.replace(hour=0, minute=0, second=0, microsecond=0)
+            max_time = max_time.replace(hour=0, minute=0, second=0, microsecond=0)
+            times = np.array([DatetimeNoLeap(year, month, day) for year in range(min_time.year, max_time.year+1) for month in range(1, 13) for day in range(1, calendar.monthrange(year, month)[1]+1)])
+        elif target == Frequency.weekly:
+            min_time = min_time.replace(hour=0, minute=0, second=0, microsecond=0)
+            max_time = max_time.replace(hour=0, minute=0, second=0, microsecond=0)
+            times = np.array([DatetimeNoLeap(year, month, day) for year in range(min_time.year, max_time.year+1) for month in range(1, 13) for day in range(1, calendar.monthrange(year, month)[1]+1) if calendar.weekday(year, month, day) == calendar.SUNDAY])
+        elif target == Frequency.monthly:
             min_time = min_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             max_time = max_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             times = np.array([DatetimeNoLeap(year, month, 1) for year in range(min_time.year, max_time.year+1) for month in range(1, 13)])

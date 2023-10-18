@@ -11,6 +11,8 @@ from cftime import DatetimeNoLeap
 ############################### TIME FUNCTIONS ################################
 
 class Frequency(Enum):
+    daily = auto()
+    weekly = auto()
     monthly = auto()
     yearly = auto()
     decadal = auto()
