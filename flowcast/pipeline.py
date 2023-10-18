@@ -400,6 +400,8 @@ class Pipeline:
             min_time = DatetimeNoLeap(min_time.year - min_time.year % 10, 1, 1)
             max_time = DatetimeNoLeap(max_time.year + max_time.year % 10, 1, 1)
             times = np.array([DatetimeNoLeap(year, 1, 1) for year in range(min_time.year, max_time.year+1, 10)])
+        else:
+            raise ValueError(f'Invalid target temporal frequency: {target}. Expected one of: {[*Frequency.__members__.values()]}')
 
         # regrid the data and save the result to the pipeline namespace
         new_data = regrid_1d(var.data, times, 'time', aggregation=var.time_regrid_type, low_memory=self.low_memory)

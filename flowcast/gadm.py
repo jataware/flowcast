@@ -17,8 +17,9 @@ import pdb
 
 
 default_gadm_path = Path(Path(__file__).parent, 'gadm')
-
+gadm_path = None
 gadm_env_var = 'GADM_DIR'
+
 
 
 def verify_gadm(dir:Path):
@@ -79,28 +80,28 @@ def download_gadm(dir:Path):
         # delete the zip file
         os.remove(join(dir, filename))
 
-
-
 def setup_gadm():
     """Ensure that GADM data is downloaded and ready to use"""
+    global gadm_path
     # if GADM_DIR environment variable is set, use that
-    gadm_dir = os.environ.get(gadm_env_var)
-    if gadm_dir is not None:
-        gadm_dir = Path(gadm_dir)
-        verify_gadm(gadm_dir)
-        print(f'Using ENV specified GADM data from {gadm_dir}')
+    gadm_path = os.environ.get(gadm_env_var)
+    if gadm_path is not None:
+        gadm_path = Path(gadm_path)
+        verify_gadm(gadm_path)
+        print(f'Using ENV specified GADM data from {gadm_path}')
         return
 
     # otherwise use the default directory, and download GADM if necessary
+    gadm_path = default_gadm_path
     try:
-        verify_gadm(default_gadm_path)
-        print(f'Using default GADM data from {default_gadm_path}')
+        verify_gadm(gadm_path)
+        print(f'Using default GADM data from {gadm_path}')
         return
     except:
-        print(f'Downloading default GADM data to {default_gadm_path}')
-        download_gadm(default_gadm_path)
-        verify_gadm(default_gadm_path)
-        print(f'Using default GADM data from {default_gadm_path}')
+        print(f'Downloading default GADM data to {gadm_path}')
+        download_gadm(gadm_path)
+        verify_gadm(gadm_path)
+        print(f'Using default GADM data from {gadm_path}')
 
 # @cache
 # def get_admin0_shapes():
@@ -113,12 +114,14 @@ def setup_gadm():
 
 @cache
 def get_admin2_shapes() -> GeoDataFrame:
-    shapes = gf.from_geofeather(join(default_gadm_path, 'gadm36_2.feather'))
+    assert gadm_path is not None, f'GADM data not initialized. Call setup_gadm() first'
+    shapes = gf.from_geofeather(join(gadm_path, 'gadm36_2.feather'))
     return shapes
 
 @cache
 def get_admin3_shapes() -> GeoDataFrame:
-    shapes = gf.from_geofeather(join(default_gadm_path, 'gadm36_3.feather'))
+    assert gadm_path is not None, f'GADM data not initialized. Call setup_gadm() first'
+    shapes = gf.from_geofeather(join(gadm_path, 'gadm36_3.feather'))
     return shapes
 
 # _sf = None
