@@ -18,9 +18,9 @@ class RegridType(Enum):
     conserve = auto()
     min = auto()
     max = auto()
-    mean = auto()
+    mean = auto()    #TODO: consider removing in favor of just interp_or_mean
     median = auto()
-    mode = auto()
+    mode = auto()    #TODO: consider removing in favor of just nearest_or_mode
     interp_or_mean = auto()
     nearest_or_mode = auto()
 
@@ -149,6 +149,9 @@ def get_bins(coords:np.ndarray, offset:BinOffset) -> np.ndarray:
     Returns:
         np.ndarray, np.ndarray: The bin edges, and the deltas between each bin
     """
+    if len(coords) < 2:
+        raise ValueError('Cannot infer bin edges from a single coordinate')
+        
     deltas = coords[1:] - coords[:-1]
     if not np.allclose(deltas, deltas[0]):
         #This happens for e.g. monthly timestamps where months can have different numbers of days
