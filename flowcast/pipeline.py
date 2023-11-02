@@ -372,7 +372,7 @@ class Pipeline:
             target (Frequency): the fixed target temporal frequency to regrid to, e.g. Frequency.monthly
         """
         var = self.get_value(x)
-        if var.frequency == target or var.time_regrid_type is None:
+        if var.frequency == target or var.time_regrid_type is None or 'time' not in var.data.dims:
             #skip regridding
             self.bind_value(y, var)
             return
@@ -424,8 +424,8 @@ class Pipeline:
         var = self.get_value(x)
         target_var = self.get_value(target)
 
-        if var.frequency == target_var.frequency or var.time_regrid_type is None:
-            #skip regridding for already matching data, and data has no time dimension
+        if var.frequency == target_var.frequency or var.time_regrid_type is None or 'time' not in var.data.dims:
+            #skip regridding for already matching data, or data has no time dimension
             self.bind_value(y, var)
             return
 
@@ -445,7 +445,7 @@ class Pipeline:
             target (Resolution): the fixed target geo resolution to regrid to, e.g. Resolution(0.5, 0.5),
         """
         var = self.get_value(x)
-        if var.resolution == target or var.geo_regrid_type is None:
+        if var.resolution == target or var.geo_regrid_type is None or 'lat' not in var.data.dims or 'lon' not in var.data.dims:
             #skip regridding
             self.bind_value(y, var)
             return
@@ -481,6 +481,11 @@ class Pipeline:
         """
         var = self.get_value(x)
         target_var = self.get_value(target)
+
+        if var.resolution == target_var.resolution or var.geo_regrid_type is None or 'lat' not in var.data.dims or 'lon' not in var.data.dims:
+            #skip regridding for already matching data, or data has no geo dimensions
+            self.bind_value(y, var)
+            return
 
         new_data = regrid_1d(var.data, target_var.data.lat.data, 'lat', aggregation=var.geo_regrid_type, low_memory=self.low_memory)
         new_data = regrid_1d(new_data, target_var.data.lon.data, 'lon', aggregation=var.geo_regrid_type, low_memory=self.low_memory)
