@@ -8,7 +8,7 @@ from rasterio.transform import from_bounds
 from rasterio.features import geometry_mask
 import calendar
 
-from .spacetime import Frequency, Resolution, DatetimeNoLeap, LongitudeConvention, inplace_set_longitude_convention
+from .spacetime import Frequency, Resolution, DatetimeNoLeap, LongitudeConvention, inplace_set_longitude_convention, mask_to_sdf
 from .regrid import RegridType, regrid_1d
 from .utilities import method_uses_prop
 from .gadm import setup_gadm, get_admin2_shapes, get_admin3_shapes
@@ -532,7 +532,7 @@ class Pipeline:
         return x
     
 
-    def binop(self, y:ResultID, x1:OperandID, x2:OperandID, op:Callable[[xr.DataArray, xr.DataArray], xr.DataArray], /):
+    def binop(self, y:ResultID, x1:OperandID, x2:OperandID, op:Callable[[xr.DataArray, xr.DataArray], xr.DataArray], /, convert_bools:bool=False):
         """
         Perform a binary operation on two datasets, e.g. `y = x1 + x2`
 
@@ -541,16 +541,28 @@ class Pipeline:
             x1 (str): the identifier of the left operand
             x2 (str): the identifier of the right operand
             op (Callable[[xr.DataArray, xr.DataArray], xr.DataArray]): the binary operation to perform
+            convert_bool (bool, optional): if True, convert any boolean input data to float before performing the operation. Defaults to False.
         """
 
         #ensure data matches the specified resolution and frequency
         x1 = self.auto_regrid(x1)
         x2 = self.auto_regrid(x2)
 
-        # perform the operation
+        # grab the data values
         var1 = self.get_value(x1)
+        data1 = var1.data
         var2 = self.get_value(x2)
-        result = op(var1.data, var2.data)
+        data2 = var2.data
+
+        # convert bools to floats if necessary
+        if convert_bools:
+            if data1.dtype == bool:
+                data1 = data1.astype(float)
+            if data2.dtype == bool:
+                data2 = data2.astype(float)
+        
+        # perform the operation
+        result = op(data1, data2)
 
         # save the result to the pipeline namespace
         self.bind_value(y, PipelineVariable.from_result(result, var1))
@@ -565,7 +577,7 @@ class Pipeline:
             x1 (str): the identifier of the left operand
             x2 (str): the identifier of the right operand
         """
-        self.binop(y, x1, x2, lambda x1, x2: x1 + x2)
+        self.binop(y, x1, x2, lambda x1, x2: x1 + x2, convert_bools=True)
 
 
     @compile
@@ -578,7 +590,7 @@ class Pipeline:
             x1 (str): the identifier of the left operand
             x2 (str): the identifier of the right operand
         """
-        self.binop(y, x1, x2, lambda x1, x2: x1 - x2)
+        self.binop(y, x1, x2, lambda x1, x2: x1 - x2, convert_bools=True)
 
 
     @compile
@@ -591,7 +603,7 @@ class Pipeline:
             x1 (str): the identifier of the left operand
             x2 (str): the identifier of the right operand
         """
-        self.binop(y, x1, x2, lambda x1, x2: x1 * x2)
+        self.binop(y, x1, x2, lambda x1, x2: x1 * x2, convert_bools=True)
 
 
     @compile
@@ -604,7 +616,139 @@ class Pipeline:
             x1 (str): the identifier of the left operand
             x2 (str): the identifier of the right operand
         """
-        self.binop(y, x1, x2, lambda x1, x2: x1 / x2)
+        self.binop(y, x1, x2, lambda x1, x2: x1 / x2, convert_bools=True)
+
+
+    @compile
+    def power(self, y:ResultID, x1:OperandID, x2:OperandID, /):
+        """
+        Raise the first dataset to the power of the second dataset, i.e. `y = x1 ** x2`
+
+        Args:
+            y (str): the identifier to bind the result to in the pipeline namespace
+            x1 (str): the identifier of the left operand
+            x2 (str): the identifier of the right operand
+        """
+        self.binop(y, x1, x2, lambda x1, x2: x1 ** x2, convert_bools=True)
+
+    # def and(self, y:ResultID, x1:OperandID, x2:OperandID, /):
+    # def or(self, y:ResultID, x1:OperandID, x2:OperandID, /):
+    # def xor(self, y:ResultID, x1:OperandID, x2:OperandID, /):
+    # def not(self, y:ResultID, x:OperandID, /):
+
+
+    @compile
+    def sum_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
+        """
+        Sum the data along the given dimensions
+
+        Args:
+            y (str): the identifier to bind the result to in the pipeline namespace
+            x (str): the identifier of the data to sum
+            dims (list[str]): the list of dimensions to sum over
+        """
+        var = self.get_value(x)
+        result = var.data.sum(dim=dims)
+        self.bind_value(y, PipelineVariable.from_result(result, var))
+
+
+    @compile
+    def mean_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
+        """
+        Take the mean of the data along the given dimensions
+
+        Args:
+            y (str): the identifier to bind the result to in the pipeline namespace
+            x (str): the identifier of the data to take the mean of
+            dims (list[str]): the list of dimensions to take the mean over
+        """
+        var = self.get_value(x)
+        result = var.data.mean(dim=dims)
+        self.bind_value(y, PipelineVariable.from_result(result, var))
+    
+    
+
+    @compile
+    def max_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
+        """
+        Take the maximum value of the data along the given dimensions
+
+        Args:
+            y (str): the identifier to bind the result to in the pipeline namespace
+            x (str): the identifier of the data to take the maximum value of
+            dims (list[str]): the list of dimensions to take the maximum value over
+        """
+        var = self.get_value(x)
+        result = var.data.max(dim=dims)
+        self.bind_value(y, PipelineVariable.from_result(result, var))
+
+    
+    @compile
+    def min_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
+        """
+        Take the minimum value of the data along the given dimensions
+
+        Args:
+            y (str): the identifier to bind the result to in the pipeline namespace
+            x (str): the identifier of the data to take the minimum value of
+            dims (list[str]): the list of dimensions to take the minimum value over
+        """
+        var = self.get_value(x)
+        result = var.data.min(dim=dims)
+        self.bind_value(y, PipelineVariable.from_result(result, var))
+
+    
+    @compile
+    def std_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
+        """
+        Take the standard deviation of the data along the given dimensions
+
+        Args:
+            y (str): the identifier to bind the result to in the pipeline namespace
+            x (str): the identifier of the data to take the standard deviation of
+            dims (list[str]): the list of dimensions to take the standard deviation over
+        """
+        var = self.get_value(x)
+        result = var.data.std(dim=dims)
+        self.bind_value(y, PipelineVariable.from_result(result, var))
+    
+
+    @compile
+    def median_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
+        """
+        Take the median value of the data along the given dimensions
+
+        Args:
+            y (str): the identifier to bind the result to in the pipeline namespace
+            x (str): the identifier of the data to take the median value of
+            dims (list[str]): the list of dimensions to take the median value over
+        """
+        var = self.get_value(x)
+        result = var.data.median(dim=dims)
+        self.bind_value(y, PipelineVariable.from_result(result, var))
+    
+
+    # @compile
+    # def mode_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
+    #     """
+    #     Take the mode of the data along the given dimensions
+
+    #     Args:
+    #         y (str): the identifier to bind the result to in the pipeline namespace
+    #         x (str): the identifier of the data to take the mode of
+    #         dims (list[str]): the list of dimensions to take the mode over
+    #     """
+    #     var = self.get_value(x)
+    #     # TODO: xarray doesn't have a .mode() function
+    #     raise NotImplementedError('xarray does not have a mode function')
+    #     self.bind_value(y, PipelineVariable.from_result(result, var))
+
+    # def scalar_add(self, y:ResultID, x:OperandID, /, scalar:float|int):
+    # def scalar_subtract(self, y:ResultID, x:OperandID, /, scalar:float|int):
+    # def scalar_multiply(self, y:ResultID, x:OperandID, /, scalar:float|int):
+    # def scalar_divide(self, y:ResultID, x:OperandID, /, scalar:float|int, position:Literal['numerator', 'denominator']):
+    # def scalar_power(self, y:ResultID, x:OperandID, /, scalar:float|int, position:Literal['base', 'exponent']):
+
 
     @compile
     def isel(self, y:ResultID, x:OperandID, /, indexers:Mapping[Any, Any]|None=None, drop:bool=False):
@@ -700,27 +844,21 @@ class Pipeline:
         # save the result to the pipeline namespace
         self.bind_value(y, PipelineVariable.from_result(out_data, var))
 
-
     @compile
-    def sum_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
+    def mask_to_distance_field(self, y:ResultID, x:OperandID, /):
         """
-        Sum the data along the given dimensions
+        Convert a mask to a distance field. Distances are in kilometers
 
         Args:
             y (str): the identifier to bind the result to in the pipeline namespace
-            x (str): the identifier of the data to sum
-            dims (list[str]): the list of dimensions to sum over
+            x (str): the identifier of the mask to convert. Must be a boolean array
         """
         var = self.get_value(x)
-        result = var.data.sum(dim=dims)
-        self.bind_value(y, PipelineVariable.from_result(result, var))
-
-    #def mean_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
-    #def max_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
-    #def min_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
-    #def std_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
-    #def median_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
-    #def mode_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
+        mask = var.data
+        assert mask.dtype == bool, f'Invalid input mask: {x}. Must be a boolean array'
+        distances = mask_to_sdf(mask)
+        self.bind_value(y, PipelineVariable.from_result(distances, var))
+            
 
 
     @compile
