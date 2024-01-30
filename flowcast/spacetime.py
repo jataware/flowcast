@@ -135,3 +135,65 @@ def inplace_set_longitude_convention(data:xr.DataArray, convention:LongitudeConv
     # update the data in place
     data.data = new_data
     data['lon'] = new_lon
+
+def points_to_mask(lats: np.ndarray, lons: np.ndarray, /, n_lat=180, n_lon=360, min_lat=-90, max_lat=90, min_lon=-180, max_lon=180) -> xr.DataArray:
+    #TODO: consider allowing for time to also be a coordinate
+    """
+    convert a list of points to a boolean mask that is true at each of the points
+
+    Args:
+    - lats (np.ndarray): an array of latitudes (in degrees)
+    - lons (np.ndarray): an array of longitudes (in degrees)
+    - n_lat (int, optional): the number of latitude bins for the output mask. Defaults to 180.
+    - n_lon (int, optional): the number of longitude bins for the output mask. Defaults to 360.
+    - min_lat (float, optional): the minimum latitude for the output mask. Defaults to -90.
+    - max_lat (float, optional): the maximum latitude for the output mask. Defaults to 90.
+    - min_lon (float, optional): the minimum longitude for the output mask. Defaults to -180.
+    - max_lon (float, optional): the maximum longitude for the output mask. Defaults to 180.
+    """
+
+    # create grid
+    grid_lats = np.linspace(min_lat, max_lat, n_lat+1)[:-1]
+    grid_lons = np.linspace(min_lon, max_lon, n_lon+1)[:-1]
+
+    # find the closest grid point to each point
+    lat_diffs = np.abs(grid_lats - lats[:, None])
+    lon_diffs = np.abs(grid_lons - lons[:, None])
+    lat_idx = np.argmin(lat_diffs, axis=1)
+    lon_idx = np.argmin(lon_diffs, axis=1)
+
+    # create mask
+    mask = np.zeros((n_lat, n_lon), dtype=bool)
+    mask[lat_idx, lon_idx] = True
+
+    data = xr.DataArray(mask, dims=['lat', 'lon'], coords={'lat': grid_lats, 'lon': grid_lons})
+
+    return data
+
+from sklearn.neighbors import BallTree
+def mask_to_sdf(mask: xr.DataArray):
+    """Generate a distance field from points in a boolean mask"""
+
+    # collect just the True the points from the mask (and convert to radians)
+    points_x_idx, points_y_idx = np.argwhere(mask.data).T
+    points_x = mask.lat.data[points_x_idx]
+    points_y = mask.lon.data[points_y_idx]
+    points = np.stack([points_x, points_y], axis=1)
+    points = np.deg2rad(points)
+
+    # create the list of points to compute the distance field for (literally just mask's coordinates)
+    mesh = np.stack(np.meshgrid(mask.lat.data, mask.lon.data), axis=2)
+    mesh_shape = mesh.shape[:2]
+    mesh = np.deg2rad(mesh)
+    mesh = mesh.reshape(-1, 2)
+
+    # efficiently compute the closest point in the mask to each point in the mesh
+    tree = BallTree(points, metric='haversine')
+    sdf = tree.query(mesh)[0]
+    sdf = sdf.reshape(*mesh_shape).T  # reshape and put lat as first dimension
+    sdf *= 6371.0  # convert from radians to kilometers
+
+    # create DataArray from the distance field
+    data = xr.DataArray(sdf, dims=['lat', 'lon'], coords={'lat': mask.lat, 'lon': mask.lon})
+
+    return data
