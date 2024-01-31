@@ -925,7 +925,7 @@ class Pipeline:
         self.bind_value(y, PipelineVariable.from_result(out_data, var))
 
     @compile
-    def mask_to_distance_field(self, y:ResultID, x:OperandID, /, include_initial_points:bool=False):
+    def mask_to_distance_field(self, y:ResultID, x:OperandID, /, include_initial_points:bool):
         """
         Convert a mask to a distance field. Distances are in kilometers
 
@@ -938,7 +938,7 @@ class Pipeline:
         var = self.get_value(x)
         mask = var.data
         assert mask.dtype == bool, f'Invalid input mask: {x}. Must be a boolean array'
-        distances = mask_to_sdf(mask)
+        distances = mask_to_sdf(mask, include_initial_points=include_initial_points)
         self.bind_value(y, PipelineVariable.from_result(distances, var))
             
 
