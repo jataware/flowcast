@@ -171,7 +171,7 @@ def points_to_mask(lats: np.ndarray, lons: np.ndarray, /, n_lat=180, n_lon=360, 
     return data
 
 from sklearn.neighbors import BallTree
-def mask_to_sdf(mask: xr.DataArray):
+def mask_to_sdf(mask: xr.DataArray, include_initial_points:bool=False) -> xr.DataArray:
     """Generate a distance field from points in a boolean mask"""
 
     # collect just the True the points from the mask (and convert to radians)
@@ -192,6 +192,9 @@ def mask_to_sdf(mask: xr.DataArray):
     sdf = tree.query(mesh)[0]
     sdf = sdf.reshape(*mesh_shape).T  # reshape and put lat as first dimension
     sdf *= 6371.0  # convert from radians to kilometers
+
+    if not include_initial_points:
+        sdf[points_x_idx, points_y_idx] = np.nan
 
     # create DataArray from the distance field
     data = xr.DataArray(sdf, dims=['lat', 'lon'], coords={'lat': mask.lat, 'lon': mask.lon})

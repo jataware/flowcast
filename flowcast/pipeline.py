@@ -17,7 +17,7 @@ from os.path import dirname, abspath
 from itertools import count
 from inspect import signature, Signature
 from enum import Enum, auto
-from typing import Any, Callable, TypeVar, Mapping #, Protocol
+from typing import Any, Callable, TypeVar, Mapping, Literal
 from typing_extensions import ParamSpec
 from types import MethodType
 from dataclasses import dataclass
@@ -512,20 +512,24 @@ class Pipeline:
 
         #TODO: need to do regridding operations that reduce size of data before ones that increase it
         # perform the time regrid
-        if self.frequency is not None and self.env[x].frequency != self.frequency:
+        if self.frequency is not None and self.env[x].frequency != self.frequency and 'time' in self.env[x].data.dims:
             tmp_id = self._next_tmp_id()
             if isinstance(self.frequency, Frequency):
+                self.print(f'AUTO-REGRIDDING "{x}" TIME TO {self.frequency}')
                 self.fixed_time_regrid.unwrapped(tmp_id, x, self.frequency)
             else:
+                self.print(f'AUTO-REGRIDDING "{x}" TO TIME MATCH "{self.frequency}"')
                 self.matched_time_regrid.unwrapped(tmp_id, x, self.frequency)
             x = tmp_id
         
         # perform the geo regrid
-        if self.resolution is not None and self.env[x].resolution != self.resolution:
+        if self.resolution is not None and self.env[x].resolution != self.resolution and 'lat' in self.env[x].data.dims and 'lon' in self.env[x].data.dims:
             tmp_id = self._next_tmp_id()
             if isinstance(self.resolution, Resolution):
+                self.print(f'AUTO-REGRIDDING "{x}" GEO TO {self.resolution}')
                 self.fixed_geo_regrid.unwrapped(tmp_id, x, self.resolution)
             else:
+                self.print(f'AUTO-REGRIDDING "{x}" TO GEO MATCH "{self.resolution}"')
                 self.matched_geo_regrid.unwrapped(tmp_id, x, self.resolution)
             x = tmp_id
 
@@ -728,6 +732,7 @@ class Pipeline:
         self.bind_value(y, PipelineVariable.from_result(result, var))
     
 
+    # TODO: xarray doesn't have a .mode() function
     # @compile
     # def mode_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
     #     """
@@ -739,15 +744,90 @@ class Pipeline:
     #         dims (list[str]): the list of dimensions to take the mode over
     #     """
     #     var = self.get_value(x)
-    #     # TODO: xarray doesn't have a .mode() function
     #     raise NotImplementedError('xarray does not have a mode function')
     #     self.bind_value(y, PipelineVariable.from_result(result, var))
 
-    # def scalar_add(self, y:ResultID, x:OperandID, /, scalar:float|int):
-    # def scalar_subtract(self, y:ResultID, x:OperandID, /, scalar:float|int):
-    # def scalar_multiply(self, y:ResultID, x:OperandID, /, scalar:float|int):
-    # def scalar_divide(self, y:ResultID, x:OperandID, /, scalar:float|int, position:Literal['numerator', 'denominator']):
-    # def scalar_power(self, y:ResultID, x:OperandID, /, scalar:float|int, position:Literal['base', 'exponent']):
+    @compile
+    def scalar_add(self, y:ResultID, x:OperandID, /, scalar:float|int):
+        """
+        Add a scalar to the given data
+
+        Args:
+            y (str): the identifier to bind the result to in the pipeline namespace
+            x (str): the identifier of the data to add the scalar to
+            scalar (float|int): the scalar to add to the data
+        """
+        var = self.get_value(x)
+        result = var.data + scalar
+        self.bind_value(y, PipelineVariable.from_result(result, var))
+
+
+    @compile
+    def scalar_subtract(self, y:ResultID, x:OperandID, /, scalar:float|int):
+        """
+        Subtract a scalar from the given data
+
+        Args:
+            y (str): the identifier to bind the result to in the pipeline namespace
+            x (str): the identifier of the data to subtract the scalar from
+            scalar (float|int): the scalar to subtract from the data
+        """
+        var = self.get_value(x)
+        result = var.data - scalar
+        self.bind_value(y, PipelineVariable.from_result(result, var))
+
+
+    @compile
+    def scalar_multiply(self, y:ResultID, x:OperandID, /, scalar:float|int):
+        """
+        Multiply the given data by a scalar
+
+        Args:
+            y (str): the identifier to bind the result to in the pipeline namespace
+            x (str): the identifier of the data to multiply by the scalar
+            scalar (float|int): the scalar to multiply the data by
+        """
+        var = self.get_value(x)
+        result = var.data * scalar
+        self.bind_value(y, PipelineVariable.from_result(result, var))
+
+
+    @compile
+    def scalar_divide(self, y:ResultID, x:OperandID, /, scalar:float|int, position:Literal['numerator', 'denominator']):
+        """
+        Divide the given data by a scalar
+
+        Args:
+            y (str): the identifier to bind the result to in the pipeline namespace
+            x (str): the identifier of the data to divide by the scalar
+            scalar (float|int): the scalar to divide the data by
+            position (Literal['numerator', 'denominator']): the position of the scalar in the division operation
+        """
+        var = self.get_value(x)
+        if position == 'numerator':
+            result = scalar / var.data
+        else:
+            result = var.data / scalar
+        self.bind_value(y, PipelineVariable.from_result(result, var))
+
+
+    @compile
+    def scalar_power(self, y:ResultID, x:OperandID, /, scalar:float|int, position:Literal['base', 'exponent']):
+        """
+        Raise the given data to the power of a scalar
+
+        Args:
+            y (str): the identifier to bind the result to in the pipeline namespace
+            x (str): the identifier of the data to raise to the power of the scalar
+            scalar (float|int): the scalar to raise the data to the power of
+            position (Literal['base', 'exponent']): the position of the scalar in the power operation
+        """
+        var = self.get_value(x)
+        if position == 'base':
+            result = scalar ** var.data
+        else:
+            result = var.data ** scalar
+        self.bind_value(y, PipelineVariable.from_result(result, var))
 
 
     @compile
@@ -845,13 +925,15 @@ class Pipeline:
         self.bind_value(y, PipelineVariable.from_result(out_data, var))
 
     @compile
-    def mask_to_distance_field(self, y:ResultID, x:OperandID, /):
+    def mask_to_distance_field(self, y:ResultID, x:OperandID, /, include_initial_points:bool=False):
         """
         Convert a mask to a distance field. Distances are in kilometers
 
         Args:
             y (str): the identifier to bind the result to in the pipeline namespace
             x (str): the identifier of the mask to convert. Must be a boolean array
+            include_initial_points (bool, optional): whether to include the initial points in the distance field. 
+                If true, initial points will get a value of 0, otherwise they will be set to NaN. Defaults to True.
         """
         var = self.get_value(x)
         mask = var.data

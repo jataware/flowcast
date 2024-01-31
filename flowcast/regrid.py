@@ -228,7 +228,8 @@ def regrid_1d(
     # hacky way to deal with nans not propagating correctly under mode aggregation
     # TODO: is this correct for nearest interpolation?
     if aggregation == RegridType.mode or aggregation == RegridType.nearest_or_mode:
-        old_data[~validmask] = float('-inf')
+        if not np.all(validmask):
+            old_data[~validmask] = float('-inf') #TODO: this line will fail on integer data. but validmask should be all True in that case, so probably no problem...
 
     #perform the regridding on the data, and replace any nans
     result = regrid_1d_reducer(old_data, overlaps, aggregation, low_memory)
