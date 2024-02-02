@@ -3,17 +3,15 @@ from __future__ import annotations
 from matplotlib import pyplot as plt
 import numpy as np
 import xarray as xr
-import geopandas as gpd
 from rasterio.transform import from_bounds
 from rasterio.features import geometry_mask
 import calendar
 
 from .spacetime import Frequency, Resolution, DatetimeNoLeap, LongitudeConvention, inplace_set_longitude_convention, mask_to_sdf
 from .regrid import RegridType, regrid_1d
-from .utilities import method_uses_prop
+from .utilities import method_uses_prop, xarray_mode
 from .gadm import setup_gadm, get_admin2_shapes, get_admin3_shapes
 
-from os.path import dirname, abspath
 from itertools import count
 from inspect import signature, Signature
 from enum import Enum, auto
@@ -330,9 +328,18 @@ class Pipeline:
 
 
     @compile
-    def threshold(self, y:ResultID, x:OperandID, /, threshold:Threshold):
+    def threshold(self, y:ResultID, x:OperandID, /, threshold:Threshold, output_float:bool=True):
         """
         Threshold a dataset, e.g. `y = x > threshold` or `y = x <= threshold`
+
+        Args:
+            y (str): the identifier to bind the result to in the pipeline namespace
+            x (str): the identifier of the data to threshold
+            threshold (Threshold): the threshold to apply to the data
+            output_float (bool, optional): whether to output the result as a float array or bool array. 
+                if True, then result will be cast as a float array, and any NaNs from the original will be propagated.
+                if False, then original bool array of threshold operation will be returned.
+                Defaults to True.
         """
 
         #first make sure the data matches the specified resolution and frequency
@@ -355,6 +362,10 @@ class Pipeline:
             result = var.data != threshold.value
         else:
             raise ValueError(f'Unrecognized threshold type: {threshold.type}. Expected one of: {[*ThresholdType.__members__.values()]}')
+
+        if output_float:
+            result = result.astype(float)
+            result = result.where(~np.isnan(var.data))
 
         # save the result to the pipeline namespace
         self.bind_value(y, PipelineVariable.from_result(result, var))
@@ -536,7 +547,7 @@ class Pipeline:
         return x
     
 
-    def binop(self, y:ResultID, x1:OperandID, x2:OperandID, op:Callable[[xr.DataArray, xr.DataArray], xr.DataArray], /, convert_bools:bool=False):
+    def binop(self, y:ResultID, x1:OperandID, x2:OperandID, op:Callable[[xr.DataArray, xr.DataArray], xr.DataArray]):
         """
         Perform a binary operation on two datasets, e.g. `y = x1 + x2`
 
@@ -545,7 +556,6 @@ class Pipeline:
             x1 (str): the identifier of the left operand
             x2 (str): the identifier of the right operand
             op (Callable[[xr.DataArray, xr.DataArray], xr.DataArray]): the binary operation to perform
-            convert_bool (bool, optional): if True, convert any boolean input data to float before performing the operation. Defaults to False.
         """
 
         #ensure data matches the specified resolution and frequency
@@ -558,13 +568,6 @@ class Pipeline:
         var2 = self.get_value(x2)
         data2 = var2.data
 
-        # convert bools to floats if necessary
-        if convert_bools:
-            if data1.dtype == bool:
-                data1 = data1.astype(float)
-            if data2.dtype == bool:
-                data2 = data2.astype(float)
-        
         # perform the operation
         result = op(data1, data2)
 
@@ -581,7 +584,7 @@ class Pipeline:
             x1 (str): the identifier of the left operand
             x2 (str): the identifier of the right operand
         """
-        self.binop(y, x1, x2, lambda x1, x2: x1 + x2, convert_bools=True)
+        self.binop(y, x1, x2, lambda x1, x2: x1 + x2)
 
 
     @compile
@@ -594,7 +597,7 @@ class Pipeline:
             x1 (str): the identifier of the left operand
             x2 (str): the identifier of the right operand
         """
-        self.binop(y, x1, x2, lambda x1, x2: x1 - x2, convert_bools=True)
+        self.binop(y, x1, x2, lambda x1, x2: x1 - x2)
 
 
     @compile
@@ -607,7 +610,7 @@ class Pipeline:
             x1 (str): the identifier of the left operand
             x2 (str): the identifier of the right operand
         """
-        self.binop(y, x1, x2, lambda x1, x2: x1 * x2, convert_bools=True)
+        self.binop(y, x1, x2, lambda x1, x2: x1 * x2)
 
 
     @compile
@@ -620,7 +623,7 @@ class Pipeline:
             x1 (str): the identifier of the left operand
             x2 (str): the identifier of the right operand
         """
-        self.binop(y, x1, x2, lambda x1, x2: x1 / x2, convert_bools=True)
+        self.binop(y, x1, x2, lambda x1, x2: x1 / x2)
 
 
     @compile
@@ -633,7 +636,7 @@ class Pipeline:
             x1 (str): the identifier of the left operand
             x2 (str): the identifier of the right operand
         """
-        self.binop(y, x1, x2, lambda x1, x2: x1 ** x2, convert_bools=True)
+        self.binop(y, x1, x2, lambda x1, x2: x1 ** x2)
 
     # def and(self, y:ResultID, x1:OperandID, x2:OperandID, /):
     # def or(self, y:ResultID, x1:OperandID, x2:OperandID, /):
@@ -732,20 +735,19 @@ class Pipeline:
         self.bind_value(y, PipelineVariable.from_result(result, var))
     
 
-    # TODO: xarray doesn't have a .mode() function
-    # @compile
-    # def mode_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
-    #     """
-    #     Take the mode of the data along the given dimensions
+    @compile
+    def mode_reduce(self, y:ResultID, x:OperandID, /, dims:list[str]):
+        """
+        Take the mode of the data along the given dimensions
 
-    #     Args:
-    #         y (str): the identifier to bind the result to in the pipeline namespace
-    #         x (str): the identifier of the data to take the mode of
-    #         dims (list[str]): the list of dimensions to take the mode over
-    #     """
-    #     var = self.get_value(x)
-    #     raise NotImplementedError('xarray does not have a mode function')
-    #     self.bind_value(y, PipelineVariable.from_result(result, var))
+        Args:
+            y (str): the identifier to bind the result to in the pipeline namespace
+            x (str): the identifier of the data to take the mode of
+            dims (list[str]): the list of dimensions to take the mode over
+        """
+        var = self.get_value(x)
+        result = xarray_mode(var.data, dim=dims)
+        self.bind_value(y, PipelineVariable.from_result(result, var))
 
     @compile
     def scalar_add(self, y:ResultID, x:OperandID, /, scalar:float|int):

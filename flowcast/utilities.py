@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable, TypeVar, Any
+from typing import Callable, TypeVar, Any, Iterable
 from typing_extensions import ParamSpec
 
 import inspect
@@ -17,7 +17,7 @@ def method_uses_prop(cls:type, method:Callable[_P, _R_co], prop:str, key:Callabl
     Check if a method access a given property of the class in its source code.
     So far this is mainly used to check if a pipeline method requires GADM data which might not be downloaded yet.
 
-    Parameters:
+    Args:
     - cls (type): The class that the method is attached to
     - method (callable): The method to check
     - prop (str): The name of the property to check for
@@ -49,3 +49,88 @@ def method_uses_prop(cls:type, method:Callable[_P, _R_co], prop:str, key:Callabl
         if isinstance(node, ast.Attribute) and node.attr == prop and isinstance(node.value, ast.Name) and node.value.id == self_param.name:
             return True
     return False
+
+
+T = TypeVar('T')
+def partition(elements:Iterable[T], condition:Callable[[T], bool]) -> tuple[list[T], list[T]]:
+    """
+    Partition a list of elements into two lists based on a condition.
+
+    Args:
+    - elements (iterable): The list of elements to partition
+    - condition (callable): The condition to partition the elements on
+
+    Returns:
+    - tuple: A tuple containing two lists. The first list contains elements that satisfy the condition, the second list contains elements that don't satisfy the condition.
+    """
+    true_list = []
+    false_list = []
+    for element in elements:
+        if condition(element):
+            true_list.append(element)
+        else:
+            false_list.append(element)
+    return (true_list, false_list)
+
+import xarray as xr
+import numpy as np
+from scipy import stats
+def nanmode(data:np.ndarray, dims:list[int]|None=None) -> np.ndarray:
+    """
+    Take the mode of the data along the specified dimensions
+
+    Args:
+    - data (np.ndarray): The data to take the mode of
+    - dims (list[int], optional): The dimensions to take the mode over. If None, all dimensions are used. Defaults to None.
+
+    Returns:
+    - np.ndarray: The mode of the data along the specified dimensions
+    """
+
+    if dims is None:
+        dims = list(range(len(data.shape)))
+
+    #transpose so that the dimensions to take the mode over are the last dimensions
+    # reduce_dims, keep_dims = partition(var.data.dims, lambda dim: dim in dims)
+    keep_dims = [i for i in range(len(data.shape)) if i not in dims]
+    reduce_dims = dims
+    data = np.transpose(data, keep_dims+reduce_dims)
+    data = data.reshape(*(data.shape[:-len(reduce_dims)]+ (-1,)))
+
+    # keep track of where all values in the mode slice are NaN
+    # This is necessary because scipy 1.10 stats.mode would set a slice of all NaNs to 0
+    # TODO: want to upgrade to scipy >= 1.11 since it properly handles all NaN slices 
+    nan_mask = np.all(np.isnan(data), axis=-1)
+
+    # take the mode
+    data = np.ascontiguousarray(data)
+    data = stats.mode(data, axis=-1, nan_policy='omit', keepdims=False).mode
+
+    # data might not be an array
+    # e.g. if the mode is a scalar, 
+    # or mode had NaNs which returns some weird Masked Array type
+    # TODO: TBD if this is the same in scipy >= 1.11
+    data = np.array(data)
+
+    # set all NaN slices back to NaN
+    data[nan_mask] = np.nan
+
+    return data
+
+def xarray_mode(data:xr.DataArray, dims:list[str]|None=None) -> xr.DataArray:
+    """
+    Take the mode of the xarray DataArray along the specified dimensions
+
+    Args:
+    - data (xr.DataArray): The data to take the mode of
+    - dims (list[str], optional): The dimensions to take the mode over. If None, all dimensions are used. Defaults to None.
+    """
+
+    #transpose so that the dimensions to take the mode over are the last dimensions
+    reduce_dims, keep_dims = partition(data.dims, lambda dim: dim in dims)
+    result = nanmode(data.data, dims=reduce_dims)
+
+    # convert result to xarray DataArray
+    result = xr.DataArray(result, coords=[data.coords[i] for i in keep_dims], dims=[data.dims[i] for i in keep_dims])
+
+    return result
