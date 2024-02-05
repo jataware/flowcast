@@ -22,7 +22,7 @@ A simple use case to demonstrate some of the capability of Flowcast is to calcul
 
 ### Scenario Diagram:
 
-![Flowcast Scenario Diagram: Population Near Recent Earthquakes](assets/earthquake_scenario.png)
+![Flowcast Scenario Diagram: Population Near Recent Earthquakes](https://raw.githubusercontent.com/jataware/flowcast/master/assets/earthquake_scenario.png)
 
 ### Scenario Code:
 
