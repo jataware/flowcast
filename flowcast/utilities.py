@@ -75,20 +75,26 @@ def partition(elements:Iterable[T], condition:Callable[[T], bool]) -> tuple[list
 import xarray as xr
 import numpy as np
 from scipy import stats
-def nanmode(data:np.ndarray, dims:list[int]|None=None) -> np.ndarray:
+def nanmode(data:np.ndarray, dims:int|list[int]|None=None) -> np.ndarray:
     """
     Take the mode of the data along the specified dimensions
 
     Args:
     - data (np.ndarray): The data to take the mode of
-    - dims (list[int], optional): The dimensions to take the mode over. If None, all dimensions are used. Defaults to None.
+    - dims (int|list[int], optional): The dimension(s) to take the mode over. If None, all dimensions are used. Defaults to None.
 
     Returns:
     - np.ndarray: The mode of the data along the specified dimensions
     """
 
+    # ensure dims is a list
     if dims is None:
         dims = list(range(len(data.shape)))
+    elif isinstance(dims, int):
+        dims = [dims]
+
+    # convert any negative dimensions to positive
+    dims = [dim if dim >= 0 else len(data.shape) + dim for dim in dims]
 
     #transpose so that the dimensions to take the mode over are the last dimensions
     # reduce_dims, keep_dims = partition(var.data.dims, lambda dim: dim in dims)
@@ -117,7 +123,7 @@ def nanmode(data:np.ndarray, dims:list[int]|None=None) -> np.ndarray:
 
     return data
 
-def xarray_mode(data:xr.DataArray, dims:list[str]|None=None) -> xr.DataArray:
+def xarray_mode(data:xr.DataArray, dims:str|list[str]|None=None) -> xr.DataArray:
     """
     Take the mode of the xarray DataArray along the specified dimensions
 
@@ -125,9 +131,18 @@ def xarray_mode(data:xr.DataArray, dims:list[str]|None=None) -> xr.DataArray:
     - data (xr.DataArray): The data to take the mode of
     - dims (list[str], optional): The dimensions to take the mode over. If None, all dimensions are used. Defaults to None.
     """
+    # ensure dims is a list
+    if dims is None:
+        dims = [*data.dims]
+    elif isinstance(dims, str):
+        dims = [dims]
 
-    #transpose so that the dimensions to take the mode over are the last dimensions
+    # get the indices of the dimensions to reduce and the dimensions to keep
     reduce_dims, keep_dims = partition(data.dims, lambda dim: dim in dims)
+    reduce_dims = [data.dims.index(dim) for dim in reduce_dims]
+    keep_dims = [data.dims.index(dim) for dim in keep_dims]
+
+    # take the mode
     result = nanmode(data.data, dims=reduce_dims)
 
     # convert result to xarray DataArray

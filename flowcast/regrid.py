@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from enum import Enum, auto
 import numpy as np
-from scipy import stats
 import xarray as xr
 from warnings import warn
 from .spacetime import datetimeNoLeap_to_epoch
+from .utilities import nanmode
 
 
 
@@ -309,12 +309,12 @@ def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Regr
     elif aggregation == RegridType.median:
         result = np.nanmedian(binned_data, axis=-1)
     elif aggregation == RegridType.mode:
-        result = stats.mode(binned_data, axis=-1, nan_policy='omit', keepdims=False)[0]
+        result = nanmode(binned_data, dims=-1)
     elif aggregation == RegridType.nearest_or_mode:
         if binned_data.shape[-1] == 1:  # select the only value in each bin
             result = binned_data[..., 0]
         else:
-            result = stats.mode(binned_data, axis=-1, nan_policy='omit', keepdims=False)[0]
+            result = nanmode(binned_data, dims=-1)
     elif aggregation == RegridType.conserve:
         result = np.nansum(binned_data, axis=-1)
     else:
