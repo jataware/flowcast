@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "flowcast"
-version = "0.3.0"
+version = "0.3.1"
 description = "A framework for dynamically stringing together operations over gridded netcdf data, to create derived insights"
 authors = ["David Samson <david@jataware.com>"]
 license = "GPL-3.0-or-later"
