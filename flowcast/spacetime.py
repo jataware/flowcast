@@ -172,10 +172,17 @@ def points_to_mask(lats: np.ndarray, lons: np.ndarray, /, n_lat=180, n_lon=360, 
 
 from sklearn.neighbors import BallTree
 def mask_to_sdf(mask: xr.DataArray, include_initial_points:bool) -> xr.DataArray:
-    """Generate a distance field from points in a boolean mask"""
+    """
+    Generate a distance field from points in a mask
+
+    Args:
+    - mask (xr.DataArray): A boolean mask of the points to generate a distance field from. If float, non-zero values are considered True. NaNs are considered False.
+    - include_initial_points (bool): Whether to include the initial points in the distance field. If False, the distance at the initial points will be NaN.
+    """
 
     # collect just the True the points from the mask (and convert to radians)
-    points_x_idx, points_y_idx = np.argwhere(mask.data).T
+    mask_data = np.nan_to_num(mask.data, nan=0)
+    points_x_idx, points_y_idx = np.argwhere(mask_data).T
     points_x = mask.lat.data[points_x_idx]
     points_y = mask.lon.data[points_y_idx]
     points = np.stack([points_x, points_y], axis=1)
@@ -193,8 +200,13 @@ def mask_to_sdf(mask: xr.DataArray, include_initial_points:bool) -> xr.DataArray
     sdf = sdf.reshape(*mesh_shape).T  # reshape and put lat as first dimension
     sdf *= 6371.0  # convert from radians to kilometers
 
+    # set the distance at the initial points to NaN
     if not include_initial_points:
         sdf[points_x_idx, points_y_idx] = np.nan
+
+    # if original mask contains NaNs, preserve them in the distance field
+    if np.any(np.isnan(mask.data)):
+        sdf[np.isnan(mask.data)] = np.nan
 
     # create DataArray from the distance field
     data = xr.DataArray(sdf, dims=['lat', 'lon'], coords={'lat': mask.lat, 'lon': mask.lon})

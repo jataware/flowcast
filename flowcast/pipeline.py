@@ -328,7 +328,7 @@ class Pipeline:
 
 
     @compile
-    def threshold(self, y:ResultID, x:OperandID, /, threshold:Threshold, output_float:bool=True):
+    def threshold(self, y:ResultID, x:OperandID, /, threshold:Threshold, preserve_nan:bool=True):
         """
         Threshold a dataset, e.g. `y = x > threshold` or `y = x <= threshold`
 
@@ -336,9 +336,9 @@ class Pipeline:
             y (str): the identifier to bind the result to in the pipeline namespace
             x (str): the identifier of the data to threshold
             threshold (Threshold): the threshold to apply to the data
-            output_float (bool, optional): whether to output the result as a float array or bool array. 
+            preserve_nan (bool, optional): whether to output the result as a float array (with NaNs preserved) or bool array.
                 if True, then result will be cast as a float array, and any NaNs from the original will be propagated.
-                if False, then original bool array of threshold operation will be returned.
+                if False, then original bool array of threshold operation will be returned, and NaNs will be set to False.
                 Defaults to True.
         """
 
@@ -363,7 +363,7 @@ class Pipeline:
         else:
             raise ValueError(f'Unrecognized threshold type: {threshold.type}. Expected one of: {[*ThresholdType.__members__.values()]}')
 
-        if output_float:
+        if preserve_nan:
             result = result.astype(float)
             result = result.where(~np.isnan(var.data))
 
@@ -933,14 +933,14 @@ class Pipeline:
 
         Args:
             y (str): the identifier to bind the result to in the pipeline namespace
-            x (str): the identifier of the mask to convert. Must be a boolean array
+            x (str): the identifier of the mask to convert. Non-zero values are considered True, and zeros and NaNs are considered False
             include_initial_points (bool, optional): whether to include the initial points in the distance field. 
                 If true, initial points will get a value of 0, otherwise they will be set to NaN. Defaults to True.
         """
         var = self.get_value(x)
         mask = var.data
-        assert mask.dtype == bool, f'Invalid input mask: {x}. Must be a boolean array'
         distances = mask_to_sdf(mask, include_initial_points=include_initial_points)
+
         self.bind_value(y, PipelineVariable.from_result(distances, var))
             
 
