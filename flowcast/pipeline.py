@@ -42,6 +42,7 @@ class ThresholdType(Enum):
 class Threshold:
     value: float|int
     type: ThresholdType
+    is_percentile: bool = False
 
 
 # Datatypes for representing identifiers in the pipeline namespace
@@ -345,21 +346,30 @@ class Pipeline:
         #first make sure the data matches the specified resolution and frequency
         x = self.auto_regrid(x, allow_no_target=True)
         
-        # perform the threshold operation
+        # grab the data
         var = self.get_value(x)
+
+        # if percentile threshold, calculate the threshold value
+        if threshold.is_percentile:
+            #nanpercentile doesn't handle inf, so do it manually
+            non_nan_data = var.data.data[~(np.isnan(var.data.data) | np.isinf(var.data.data))]
+            threshold_value = np.percentile(non_nan_data, threshold.value)
+        else:
+            threshold_value = threshold.value
         
+        # perform the threshold operation
         if threshold.type == ThresholdType.greater_than:
-            result = var.data > threshold.value
+            result = var.data > threshold_value
         elif threshold.type == ThresholdType.less_than:
-            result = var.data < threshold.value
+            result = var.data < threshold_value
         elif threshold.type == ThresholdType.greater_than_or_equal:
-            result = var.data >= threshold.value
+            result = var.data >= threshold_value
         elif threshold.type == ThresholdType.less_than_or_equal:
-            result = var.data <= threshold.value
+            result = var.data <= threshold_value
         elif threshold.type == ThresholdType.equal:
-            result = var.data == threshold.value
+            result = var.data == threshold_value
         elif threshold.type == ThresholdType.not_equal:
-            result = var.data != threshold.value
+            result = var.data != threshold_value
         else:
             raise ValueError(f'Unrecognized threshold type: {threshold.type}. Expected one of: {[*ThresholdType.__members__.values()]}')
 
