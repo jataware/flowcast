@@ -180,16 +180,59 @@ def mask_to_sdf(mask: xr.DataArray, include_initial_points:bool) -> xr.DataArray
     - include_initial_points (bool): Whether to include the initial points in the distance field. If False, the distance at the initial points will be NaN.
     """
 
+    assert 'lat' in mask.coords and 'lon' in mask.coords, f'mask must have lat and lon coordinates. Got: {mask.coords.keys()}'
+
+    # if mask only has lat/lon, it is already a single slice
+    if mask.coords.keys() == {'lat', 'lon'}:
+        sdf = mask_slice_to_sdf(mask.data, mask.lat, mask.lon, include_initial_points)
+        return xr.DataArray(sdf, dims=['lat', 'lon'], coords={'lat': mask.lat, 'lon': mask.lon})
+
+
+    #reshape mask data so that lat,lon are the last two dimensions
+    mask_data = mask.data
+    lat_dim_idx = mask.dims.index('lat')
+    lon_dim_idx = mask.dims.index('lon')
+    lon_lat_dim_idxs = [lat_dim_idx, lon_dim_idx]
+    new_order = [i for i in range(len(mask.dims)) if i not in lon_lat_dim_idxs] + lon_lat_dim_idxs
+    new_coords = [mask.dims[i] for i in new_order]
+    mask_data = np.transpose(mask_data, axes=new_order)
+
+    # create an empty array to store the distance field
+    sdf_slices = np.zeros(mask_data.shape, dtype=float)
+
+    # iterate over each slice of the mask
+    lat, lon = mask.lat, mask.lon
+    for idx in np.ndindex(mask_data.shape[:-2]):
+        slice_data = mask_data[idx]
+        sdf_slices[idx] = mask_slice_to_sdf(slice_data, lat, lon, include_initial_points)
+
+    # create the new DataArray
+    sdf = xr.DataArray(sdf_slices, dims=new_coords, coords={dim: mask.coords[dim] for dim in new_coords})
+    return sdf
+
+
+
+def mask_slice_to_sdf(mask: np.ndarray, lat:np.ndarray, lon:np.ndarray, include_initial_points:bool) -> np.ndarray:
+    """
+    Generate a distance field from points in a single (lat/lon) mask slice
+
+    Args:
+    - mask (np.ndarray): A boolean mask of the points to generate a distance field from. If float, non-zero values are considered True. NaNs are considered False.
+    """
+
     # collect just the True the points from the mask (and convert to radians)
-    mask_data = np.nan_to_num(mask.data, nan=0)
+    assert len(mask.shape) == 2, f'mask must be 2D. Got: {mask.shape}'
+    assert len(lat) == mask.shape[0] and len(lon) == mask.shape[1], f'lat and lon must have the same length as the mask. Got: {len(lat)}, {len(lon)} and {mask.shape}'
+
+    mask_data = np.nan_to_num(mask, nan=0)
     points_x_idx, points_y_idx = np.argwhere(mask_data).T
-    points_x = mask.lat.data[points_x_idx]
-    points_y = mask.lon.data[points_y_idx]
+    points_x = lat[points_x_idx]
+    points_y = lon[points_y_idx]
     points = np.stack([points_x, points_y], axis=1)
     points = np.deg2rad(points)
 
     # create the list of points to compute the distance field for (literally just mask's coordinates)
-    mesh = np.stack(np.meshgrid(mask.lat.data, mask.lon.data), axis=2)
+    mesh = np.stack(np.meshgrid(lat, lon), axis=2)
     mesh_shape = mesh.shape[:2]
     mesh = np.deg2rad(mesh)
     mesh = mesh.reshape(-1, 2)
@@ -205,10 +248,7 @@ def mask_to_sdf(mask: xr.DataArray, include_initial_points:bool) -> xr.DataArray
         sdf[points_x_idx, points_y_idx] = np.nan
 
     # if original mask contains NaNs, preserve them in the distance field
-    if np.any(np.isnan(mask.data)):
-        sdf[np.isnan(mask.data)] = np.nan
+    if np.any(np.isnan(mask)):
+        sdf[np.isnan(mask)] = np.nan
 
-    # create DataArray from the distance field
-    data = xr.DataArray(sdf, dims=['lat', 'lon'], coords={'lat': mask.lat, 'lon': mask.lon})
-
-    return data
+    return sdf
