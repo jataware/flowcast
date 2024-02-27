@@ -56,7 +56,6 @@ def main():
     modis = modis.rename({'x': 'lon', 'y': 'lat'})
     modis.data = modis.data.astype(np.float32)
 
-
     def loader_factory(feature):
         return lambda: Variable(feature, None, geo_regrid_type=GeoRegridType.nearest_or_mode)
 
@@ -116,6 +115,7 @@ def main():
 
     plt.show()
 
+    # plot all of the masks
     # for key, thresholds in ree_indicators.items():
     #     for threshold in thresholds:
     #         threshold_name = f'{key}_{threshold}_threshold'
@@ -126,121 +126,6 @@ def main():
     ...
 
 
-# def get_neighbors(mask: np.ndarray):
-#     """
-#     return a boolean mask of neighbors relative to the original mask
-
-#     neighbors only include 4-connected neighbors (up, down, left, right)
-#     """
-#     # structuring_element = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]])
-#     structuring_element = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]])
-#     return binary_dilation(mask, structure=structuring_element) & ~mask
-
-
-# def make_distance_atlas(lats: np.ndarray, lons: np.ndarray):
-#     r_earth = 6371.0  # kilometers
-
-#     # convert to radians
-#     lats = np.radians(lats)
-#     lons = np.radians(lons)
-
-#     dlats = np.diff(lats)
-#     dlat = dlats[0]
-#     assert np.allclose(dlats, dlat), 'latitudes must be evenly spaced'
-
-#     dlons = np.diff(lons)
-#     dlon = dlons[0]
-#     assert np.allclose(dlons, dlon), 'longitudes must be evenly spaced'
-
-#     step_sizes_x = dlon * r_earth * np.cos(lats)
-#     step_sizes_y = dlat * r_earth * np.ones_like(lats)
-
-#     return step_sizes_x, step_sizes_y
-
-
-# def haversine(lats: np.ndarray, lons: np.ndarray, y: np.ndarray, x: np.ndarray):
-#     """
-#     return the distance from each point in the first set of coordinates every point in the second set of coordinates
-
-#     Args:
-#         lats: 1D array of latitudes (in degrees)
-#         lons: 1D array of longitudes (in degrees)
-#         y: 1D array of latitudes (in degrees)
-#         x: 1D array of longitudes (in degrees)
-
-#     returns:
-#         matrix of distances for each pair (in kilometers)
-#     """
-#     # set up for broadcasting
-#     lats = lats[:, None]
-#     lons = lons[:, None]
-#     y = y[None]
-#     x = x[None]
-
-#     r_earth = 6371.0  # kilometers
-
-#     # convert to radians
-#     lats = np.radians(lats)
-#     lons = np.radians(lons)
-#     y = np.radians(y)
-#     x = np.radians(x)
-
-#     # calculate the distance
-#     dlat = lats - y
-#     dlon = lons - x
-#     a = np.sin(dlat/2)**2 + np.cos(y) * np.cos(lats) * np.sin(dlon/2)**2
-#     c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))
-#     d = r_earth * c
-
-#     return d
-
-
-# def generate_AU_sdf():
-#     data = xr.open_rasterio('AU_MODIS/DLCD_v2-1_MODIS_EVI_13_20140101-20151231.tif')
-#     ###### DEBUG reshape the data with flowcast ############
-#     # Necessary because the current algorithm is pretty inefficient
-#     print('regridding data...', end='', flush=True)
-#     data.data = data.data.astype(np.float32)
-#     old_x = data.x.data
-#     old_y = data.y.data
-#     new_x = np.arange(old_x.min(), old_x.max(), 0.1)
-#     new_y = np.arange(old_y.min(), old_y.max(), 0.1)
-#     data = regrid_1d(data, new_x, 'x', aggregation=GeoRegridType.nearest_or_mode)
-#     data = regrid_1d(data, new_y, 'y', aggregation=GeoRegridType.nearest_or_mode)
-#     print('done')
-
-#     ###### DEBUG take smaller selection of data ############
-#     # data = data.isel(y=slice(8950, 9550), x=slice(10800, 11200))
-
-#     data = data.isel(band=0)
-#     data = data.rename({'x': 'lon', 'y': 'lat'})
-#     raw_data = data.data
-#     lats = data.lat.data
-#     lons = data.lon.data
-
-#     # create blank float32 array
-#     sdf = np.full(data.shape, np.nan, dtype=np.float32)
-
-#     # mask to select all bodies of water in the data
-#     init_mask = raw_data == 3
-
-#     mask_ys, mask_xs = np.where(init_mask)
-#     mask_lats = lats[mask_ys]
-#     mask_lons = lons[mask_xs]
-
-#     chunk_size = 5
-#     for coords in tqdm(chunked(product(range(lats.size), range(lons.size)), chunk_size), total=(lats.size * lons.size)//chunk_size, desc='calculating distances'):
-#         ys, xs = np.array(coords).T
-#         distances = haversine(mask_lats, mask_lons, lats[ys], lons[xs])
-#         # bests = distances.argmin(axis=0)
-#         # sdf[ys, xs] = distances[bests]
-#         sdf[ys, xs] = distances.min(axis=0)
-
-#     # save the SDF
-#     sdf = xr.DataArray(sdf, coords=[data.lat, data.lon], dims=['lat', 'lon'])
-#     sdf.to_netcdf('sdf.nc')
-
 
 if __name__ == '__main__':
-    # generate_AU_sdf()
     main()
