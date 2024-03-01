@@ -1,5 +1,6 @@
 from flowcast.pipeline import Pipeline, Variable, Threshold, ThresholdType
 from flowcast.regrid import RegridType as TimeRegridType, RegridType as GeoRegridType
+from flowcast.spacetime import Resolution
 import xarray as xr
 from matplotlib import pyplot as plt
 from itertools import count
@@ -126,6 +127,53 @@ def main():
     ...
 
 
+def shrink_data():
+    # Geology data
+    # data = xr.open_dataset('au_datacube.nc')
+
+    # # select only the features listed in ree_indicators
+    # data = data[ree_indicators.keys()]
+    # # data.to_netcdf('small_au_datacube.nc')
+
+    # # print out the legends of each of the features
+    # for key in ree_indicators:
+    #     print(key)
+    #     for i, value in enumerate(data[key].legend):
+    #         print(f'  {i}: {value}')
+
+    # # MODIS data
+    modis = xr.open_rasterio('AU_MODIS/DLCD_v2-1_MODIS_EVI_13_20140101-20151231.tif')
+    modis = modis.isel(band=0, drop=True)
+    modis = modis.rename({'x': 'lon', 'y': 'lat'})
+    modis.data = modis.data.astype(np.float32)
+    modis.data[modis.data == 0] = np.nan
+
+    # regrid the modis data to a smaller size
+    from flowcast.regrid import regrid_1d, RegridType
+    new_lat = np.arange(modis.lat.min(), modis.lat.max(), 0.025)
+    new_lon = np.arange(modis.lon.min(), modis.lon.max(), 0.025)
+    print('regridding step 1')
+    modis = regrid_1d(modis, new_lat, 'lat', aggregation=RegridType.nearest_or_mode)
+    print('regridding step 2')
+    modis = regrid_1d(modis, new_lon, 'lon', aggregation=RegridType.nearest_or_mode)
+
+    #convert modis into a dataset
+    modis = modis.to_dataset(name='modis')
+
+    modis.to_netcdf('small_modis.nc')
+    pdb.set_trace()
+
+    # def loader_factory(feature):
+    #     return lambda: Variable(feature, None, geo_regrid_type=GeoRegridType.nearest_or_mode)
+
+    # pdb.set_trace()
+    # pipe = Pipeline()
+    # pipe.set_geo_resolution(Resolution(0.01, 0.01))
+    # pipe.set_time_resolution('Geology_Era_Maximum_Majority')
+
+
+
 
 if __name__ == '__main__':
-    main()
+    # main()
+    shrink_data()
