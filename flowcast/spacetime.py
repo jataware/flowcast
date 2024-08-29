@@ -5,6 +5,7 @@ import numpy as np
 import xarray as xr
 from dataclasses import dataclass
 from cftime import DatetimeNoLeap
+from sklearn.neighbors import BallTree
 
 
 
@@ -170,7 +171,6 @@ def points_to_mask(lats: np.ndarray, lons: np.ndarray, /, n_lat=180, n_lon=360, 
 
     return data
 
-from sklearn.neighbors import BallTree
 def mask_to_sdf(mask: xr.DataArray, include_initial_points:bool) -> xr.DataArray:
     """
     Generate a distance field from points in a mask

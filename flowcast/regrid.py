@@ -281,7 +281,8 @@ def regrid_1d_reducer(old_data:np.ndarray, overlaps:np.ndarray, aggregation:Regr
     #convert overlaps/overlap_mask so that unselected locations are nan
     overlaps[~overlap_mask] = np.nan
     overlap_mask[~overlap_mask] = np.nan
-
+    # overlap_mask = overlap_mask.astype(np.float32)
+    # overlap_mask[overlap_mask==0] = np.nan #TODO: this is a bool array, so np.nan here will be set to true...
     # set up selectors for the indices of each bin to aggregate over
     col_selector = np.arange(max_col_length) + starts[:, None]
     row_selector = np.arange(overlap_mask.shape[1])[:, None]
