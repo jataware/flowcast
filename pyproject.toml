@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "flowcast"
-version = "0.3.7"
+version = "0.3.8"
 description = "A framework for dynamically stringing together operations over gridded netcdf data, to create derived insights"
 authors = ["David Samson <david@jataware.com>"]
 license = "GPL-3.0-or-later"
@@ -14,7 +14,7 @@ geopandas = ">=0.8.1"
 rasterio = ">=1.2.10"
 cftime = "^1.6.2"
 nc-time-axis = "^1.4.1"
-scipy = ">=1.6.2"
+scipy = ">=1.9"
 typing-extensions = "^4.8.0"
 rich = "^13.5.3"
 netCDF4 = ">=1.5.3"
