@@ -908,6 +908,12 @@ class Pipeline:
         # needed for geometry_mask. cache here since we don't need to recompute it for each place
         transform = from_bounds(lon.min(), lat.min(), lon.max(), lat.max(), len(lon), len(lat))
 
+        # keep track of the min/max lat/lon indices that are masked out
+        min_lon_idx: int|None = None
+        max_lon_idx: int|None = None
+        min_lat_idx: int|None = None
+        max_lat_idx: int|None = None
+
         for i, place in enumerate(places):
             self.print(f'processing {place}...')
             place_shapes = shapes[shapes[f'NAME_{admin_level}'] == place]
@@ -923,7 +929,18 @@ class Pipeline:
             # insert the masked data into the output array
             out_data[i] = masked_data
 
-                # combine all the data into a new DataArray with a country dimension
+            # update the min/max lat/lon indices
+            candidate_min_lon_idx = np.where(mask.any(axis=0))[0].min()
+            min_lon_idx = candidate_min_lon_idx if min_lat_idx is None else min(min_lon_idx, candidate_min_lon_idx)
+            candidate_max_lon_idx = np.where(mask.any(axis=0))[0].max()
+            max_lon_idx = candidate_max_lon_idx if max_lon_idx is None else max(max_lon_idx, candidate_max_lon_idx)
+            candidate_min_lat_idx = np.where(mask.any(axis=1))[0].min()
+            min_lat_idx = candidate_min_lat_idx if min_lat_idx is None else min(min_lat_idx, candidate_min_lat_idx)
+            candidate_max_lat_idx = np.where(mask.any(axis=1))[0].max()
+            max_lat_idx = candidate_max_lat_idx if max_lat_idx is None else max(max_lat_idx, candidate_max_lat_idx)
+
+
+        # combine all the data into a new DataArray with a country dimension
         out_data = xr.DataArray(
             out_data,
             dims=(f'admin{admin_level}', *data.dims),
@@ -932,6 +949,9 @@ class Pipeline:
                 **data.coords,
             }
         )
+
+        # crop the data to the minimum bounding box that contains all the places
+        out_data = out_data.isel(lat=slice(min_lat_idx, max_lat_idx+1), lon=slice(min_lon_idx, max_lon_idx+1))
         
         # save the result to the pipeline namespace
         self.bind_value(y, PipelineVariable.from_result(out_data, var))
