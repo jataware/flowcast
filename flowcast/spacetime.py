@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from cftime import DatetimeNoLeap
 from sklearn.neighbors import BallTree
 
+from .utilities import angle_diff
+
 
 
 ############################### TIME FUNCTIONS ################################
@@ -136,6 +138,41 @@ def inplace_set_longitude_convention(data:xr.DataArray, convention:LongitudeConv
     # update the data in place
     data.data = new_data
     data['lon'] = new_lon
+
+
+
+def determine_tight_lon_bounds(lons: np.ndarray) -> tuple[float, float]:
+    """
+    Given a list of longitude coordinates in degrees, determine the tightest bounds that encompass all coordinates.
+    This is useful for determining axis limits when plotting countries, etc.
+
+    Args:
+    - lons (np.ndarray): An array of longitude coordinates in degrees.
+
+    Returns:
+    - tuple: A tuple containing the left and right longitude bounds. Guarantees lon_min < lon_max, though they may not be in -180..180 range.
+    """
+
+    # compute a rough center to be a reference, and then compute all angles relative to that center
+    x, y = np.cos(np.radians(lons)), np.sin(np.radians(lons))
+    lon_center = np.degrees(np.arctan2(np.mean(y), np.mean(x)))
+    lon_diffs = angle_diff(lons, lon_center)
+
+    # adjust the center to be the actual center of the data
+    center_adjustment = (lon_diffs.max() + lon_diffs.min()) / 2
+    lon_center += center_adjustment
+    lon_diffs -= center_adjustment
+
+    # compute the bounds
+    centered_lons = lon_diffs + lon_center
+    lon_min, lon_max = centered_lons.min(), centered_lons.max()
+
+    return lon_min, lon_max
+
+
+
+
+
 
 def points_to_mask(lats: np.ndarray, lons: np.ndarray, /, n_lat=180, n_lon=360, min_lat=-90, max_lat=90, min_lon=-180, max_lon=180) -> xr.DataArray:
     #TODO: consider allowing for time to also be a coordinate

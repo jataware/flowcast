@@ -7,9 +7,9 @@ from rasterio.transform import from_bounds
 from rasterio.features import geometry_mask
 import calendar
 
-from .spacetime import Frequency, Resolution, DatetimeNoLeap, LongitudeConvention, inplace_set_longitude_convention, mask_to_sdf
+from .spacetime import Frequency, Resolution, DatetimeNoLeap, LongitudeConvention, inplace_set_longitude_convention, determine_tight_lon_bounds, mask_to_sdf
 from .regrid import RegridType, regrid_1d
-from .utilities import method_uses_prop, xarray_mode
+from .utilities import method_uses_prop, xarray_mode, angle_diff
 from .gadm import setup_gadm, get_admin2_shapes, get_admin3_shapes
 
 from itertools import count
@@ -908,9 +908,8 @@ class Pipeline:
         # needed for geometry_mask. cache here since we don't need to recompute it for each place
         transform = from_bounds(lon.min(), lat.min(), lon.max(), lat.max(), len(lon), len(lat))
 
-        # keep track of the min/max lat/lon indices that are masked out
-        min_lon_idx: int|None = None
-        max_lon_idx: int|None = None
+        # keep track of the min/max lat indices and all lon indices that are masked out
+        lon_idxs = []
         min_lat_idx: int|None = None
         max_lat_idx: int|None = None
 
@@ -930,10 +929,7 @@ class Pipeline:
             out_data[i] = masked_data
 
             # update the min/max lat/lon indices
-            candidate_min_lon_idx = np.where(mask.any(axis=0))[0].min()
-            min_lon_idx = candidate_min_lon_idx if min_lat_idx is None else min(min_lon_idx, candidate_min_lon_idx)
-            candidate_max_lon_idx = np.where(mask.any(axis=0))[0].max()
-            max_lon_idx = candidate_max_lon_idx if max_lon_idx is None else max(max_lon_idx, candidate_max_lon_idx)
+            lon_idxs.append(np.where(mask.any(axis=0))[0])
             candidate_min_lat_idx = np.where(mask.any(axis=1))[0].min()
             min_lat_idx = candidate_min_lat_idx if min_lat_idx is None else min(min_lat_idx, candidate_min_lat_idx)
             candidate_max_lat_idx = np.where(mask.any(axis=1))[0].max()
@@ -950,8 +946,22 @@ class Pipeline:
             }
         )
 
+        # determine the indices of tight longitude bounds around the data (accounting for wrapping)
+        lon_idxs = np.concatenate(lon_idxs)
+        lons = lon[lon_idxs]
+        min_lon, max_lon = determine_tight_lon_bounds(lons)
+        min_lon_idx = np.abs(angle_diff(lon, min_lon)).argmin()
+        max_lon_idx = np.abs(angle_diff(lon, max_lon)).argmin()
+
         # crop the data to the minimum bounding box that contains all the places
-        out_data = out_data.isel(lat=slice(min_lat_idx, max_lat_idx+1), lon=slice(min_lon_idx, max_lon_idx+1))
+        if min_lon_idx <= max_lon_idx:
+            out_data = out_data.isel(lat=slice(min_lat_idx, max_lat_idx+1), lon=slice(min_lon_idx, max_lon_idx+1))
+        else:
+            #need to roll data along longitude so 0:max_lon_idx is after min_lon_idx:end
+            out_data = xr.concat([
+                out_data.isel(lat=slice(min_lat_idx, max_lat_idx+1), lon=slice(min_lon_idx, None)),
+                out_data.isel(lat=slice(min_lat_idx, max_lat_idx+1), lon=slice(0, max_lon_idx+1))
+            ], dim='lon')
         
         # save the result to the pipeline namespace
         self.bind_value(y, PipelineVariable.from_result(out_data, var))

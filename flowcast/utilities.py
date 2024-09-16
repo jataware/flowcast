@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable, TypeVar, Any, Iterable
+from typing import Callable, TypeVar, Any, Iterable, overload
 from typing_extensions import ParamSpec
 
 import inspect
@@ -149,3 +149,36 @@ def xarray_mode(data:xr.DataArray, dims:str|list[str]|None=None) -> xr.DataArray
     result = xr.DataArray(result, coords=[data.coords[i] for i in keep_dims], dims=[data.dims[i] for i in keep_dims])
 
     return result
+
+
+
+@overload
+def angle_diff(a: float, b: float) -> float: ...
+@overload
+def angle_diff(a: np.ndarray, b: np.ndarray) -> np.ndarray: ...
+def angle_diff(a: float|np.ndarray, b: float|np.ndarray) -> float|np.ndarray:
+    """
+    Calculate `a - b` in degrees taking care for wrap around. Result will be in range (-180, 180].
+
+    Args:
+    - a (float|np.ndarray): First angle in degrees. If ndarray, should broadcast with b.
+    - b (float|np.ndarray): Second angle in degrees. If ndarray, should broadcast with a.
+
+    Returns:
+    - float|np.ndarray: a - b in degrees, wrapped to (-180, 180].
+    """
+    # convert the angles to 2D unit vectors
+    ax = np.cos(np.radians(a))
+    ay = np.sin(np.radians(a))
+    bx = np.cos(np.radians(b))
+    by = np.sin(np.radians(b))
+
+    # calculate the 2D cross product and dot product
+    cross = ax*by - ay*bx
+    dot = ax*bx + ay*by
+
+    # calculate the angle difference
+    # negate cross so that it is a-b instead of b-a
+    diff = np.degrees(np.arctan2(-cross, dot))
+
+    return diff
