@@ -118,8 +118,9 @@ def nanmode(data:np.ndarray, dims:int|list[int]|None=None) -> np.ndarray:
     # TODO: TBD if this is the same in scipy >= 1.11
     data = np.array(data)
 
-    # set all NaN slices back to NaN
-    data[nan_mask] = np.nan
+    # set all NaN slices back to NaN (or skip if data didn't have any NaNs/doesn't support NaNs)
+    if nan_mask.any():
+        data[nan_mask] = np.nan
 
     return data
 
